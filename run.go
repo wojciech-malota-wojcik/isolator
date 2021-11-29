@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"io/ioutil"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"syscall"
@@ -36,10 +37,16 @@ func Run(ctx context.Context, config Config) error {
 		return err
 	}
 
+	if err := os.MkdirAll(filepath.Dir(exePath), 0o700); err != nil && !os.IsExist(err) {
+		return err
+	}
+
 	cmd := exec.Command(exePath, "--addr", config.Address)
 	cmd.Dir = "/"
+	cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin", "LANG=en_US.UTF-8"}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Chroot: config.RootDir,
+		Chroot:     config.RootDir,
+		Cloneflags: syscall.CLONE_NEWPID,
 	}
 	return libexec.Exec(ctx, cmd)
 }
