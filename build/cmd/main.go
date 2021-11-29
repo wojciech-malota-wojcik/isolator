@@ -7,8 +7,8 @@ import (
 
 	"github.com/ridge/must"
 	"github.com/wojciech-malota-wojcik/build"
-	me "github.com/wojciech-malota-wojcik/imagebuilder/build"
 	"github.com/wojciech-malota-wojcik/ioc/v2"
+	me "github.com/wojciech-malota-wojcik/isolator/build"
 	"github.com/wojciech-malota-wojcik/run"
 )
 

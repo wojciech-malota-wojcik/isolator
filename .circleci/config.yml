@@ -20,7 +20,7 @@ jobs:
     working_directory: ~/isolator
     steps:
       - checkout
-      - run: ./bin/isolator dev/lint dev/test build
+      - run: ./bin/isolator generate dev/lint dev/test build
 workflows:
   version: 2
   pull-request:
