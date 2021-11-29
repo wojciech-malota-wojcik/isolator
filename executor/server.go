@@ -9,6 +9,7 @@ import (
 	"net"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/ridge/must"
 	"github.com/ridge/parallel"
@@ -27,17 +28,24 @@ func Run(ctx context.Context, addr string) error {
 	if err != nil {
 		return err
 	}
+	defer listener.Close()
 
+	var mu sync.Mutex
+	var conn net.Conn
 	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
 		spawn("connection", parallel.Exit, func(ctx context.Context) error {
-			conn, err := listener.Accept()
+			var err error
+			connTmp, err := listener.Accept()
 			if err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
 				return err
 			}
-			defer conn.Close()
+
+			mu.Lock()
+			conn = connTmp
+			mu.Unlock()
 
 			decoder := json.NewDecoder(conn)
 			for {
@@ -63,7 +71,13 @@ func Run(ctx context.Context, addr string) error {
 		})
 		spawn("watchdog", parallel.Exit, func(ctx context.Context) error {
 			<-ctx.Done()
-			return listener.Close()
+			mu.Lock()
+			defer mu.Unlock()
+
+			if conn != nil {
+				_ = conn.Close()
+			}
+			return nil
 		})
 		return nil
 	})
