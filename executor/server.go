@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/ridge/must"
 	"github.com/ridge/parallel"
@@ -23,6 +25,16 @@ func Run(ctx context.Context, addr string) error {
 	if len(addrParts) != 2 || addrParts[0] == "" || addrParts[1] == "" {
 		return fmt.Errorf("invalid address: %s", addr)
 	}
+
+	if err := os.MkdirAll("/proc", 0o755); err != nil && !os.IsExist(err) {
+		return err
+	}
+	if err := syscall.Mount("none", "/proc", "proc", 0, ""); err != nil {
+		return err
+	}
+	defer func() {
+		_ = syscall.Unmount("/proc", 0)
+	}()
 
 	listener, err := net.Listen(addrParts[0], addrParts[1])
 	if err != nil {
