@@ -22,14 +22,14 @@ func Run(ctx context.Context, addr string) error {
 		return fmt.Errorf("invalid address: %s", addr)
 	}
 
-	l, err := net.Listen(addrParts[0], addrParts[1])
+	listener, err := net.Listen(addrParts[0], addrParts[1])
 	if err != nil {
 		return err
 	}
 
 	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
 		spawn("connection", parallel.Exit, func(ctx context.Context) error {
-			conn, err := l.Accept()
+			conn, err := listener.Accept()
 			if err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
@@ -57,7 +57,7 @@ func Run(ctx context.Context, addr string) error {
 		})
 		spawn("watchdog", parallel.Exit, func(ctx context.Context) error {
 			<-ctx.Done()
-			return l.Close()
+			return listener.Close()
 		})
 		return nil
 	})
