@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"io/ioutil"
 	"os/exec"
+	"path/filepath"
+	"syscall"
 
 	"github.com/ridge/must"
 	"github.com/wojciech-malota-wojcik/isolator/generated"
@@ -28,5 +30,16 @@ func Run(ctx context.Context, config Config) error {
 	if err := ioutil.WriteFile(config.ExecutorPath, must.Bytes(base64.RawStdEncoding.DecodeString(generated.Executor)), 0o755); err != nil {
 		return err
 	}
-	return libexec.Exec(ctx, exec.Command(config.ExecutorPath, "--addr", config.Address))
+
+	exePath, err := filepath.Rel(config.RootDir, config.ExecutorPath)
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.Command(exePath, "--addr", config.Address)
+	cmd.Dir = "/"
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Chroot: config.RootDir,
+	}
+	return libexec.Exec(ctx, cmd)
 }

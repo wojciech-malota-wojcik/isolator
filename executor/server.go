@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/ridge/must"
 	"github.com/ridge/parallel"
 	"github.com/wojciech-malota-wojcik/isolator/executor/wire"
 	"github.com/wojciech-malota-wojcik/libexec"
@@ -50,7 +51,12 @@ func Run(ctx context.Context, addr string) error {
 					}
 					return err
 				}
+
+				var errStr string
 				if err := libexec.Exec(ctx, exec.Command("/bin/sh", "-c", msg.Command)); err != nil {
+					errStr = err.Error()
+				}
+				if _, err := conn.Write(must.Bytes(json.Marshal(wire.Ack{Error: errStr}))); err != nil {
 					return err
 				}
 			}
