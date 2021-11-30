@@ -5,11 +5,9 @@ import (
 	"encoding/base64"
 	"io/ioutil"
 	"os"
-	"os/exec"
 
 	"github.com/wojciech-malota-wojcik/build"
 	"github.com/wojciech-malota-wojcik/buildgo"
-	"github.com/wojciech-malota-wojcik/libexec"
 )
 
 func buildExecutor(ctx context.Context) error {
@@ -31,16 +29,7 @@ func packExecutor() error {
 	return ioutil.WriteFile("generated/executor.go", []byte("package generated\n\n// Executor holds executor binary (it's all because golang dev team constantly refuses to implement process forking)\nconst Executor = \""+encoded+"\"\n"), 0o644)
 }
 
-func generate(deps build.DepsFunc) {
-	deps(buildExecutor, packExecutor)
-}
-
 func buildApp(ctx context.Context, deps build.DepsFunc) error {
-	deps(generate)
-	return buildgo.GoBuildPkg(ctx, "cmd/isolator", "bin/isolator-app", false)
-}
-
-func runApp(ctx context.Context, deps build.DepsFunc) error {
-	deps(buildApp)
-	return libexec.Exec(ctx, exec.Command("./bin/isolator-app"))
+	deps(buildExecutor, packExecutor)
+	return nil
 }
