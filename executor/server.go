@@ -4,12 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"os"
 	"os/exec"
-	"strings"
 	"sync"
 	"syscall"
 
@@ -20,12 +18,7 @@ import (
 )
 
 // Run runs isolator server
-func Run(ctx context.Context, addr string) error {
-	addrParts := strings.SplitN(addr, ":", 2)
-	if len(addrParts) != 2 || addrParts[0] == "" || addrParts[1] == "" {
-		return fmt.Errorf("invalid address: %s", addr)
-	}
-
+func Run(ctx context.Context) error {
 	if err := os.MkdirAll("/proc", 0o755); err != nil && !os.IsExist(err) {
 		return err
 	}
@@ -36,11 +29,14 @@ func Run(ctx context.Context, addr string) error {
 		_ = syscall.Unmount("/proc", 0)
 	}()
 
-	listener, err := net.Listen(addrParts[0], addrParts[1])
+	listener, err := net.Listen("unix", wire.SocketPath)
 	if err != nil {
 		return err
 	}
-	defer listener.Close()
+	defer func() {
+		_ = listener.Close()
+		_ = os.Remove(wire.SocketPath)
+	}()
 
 	var mu sync.Mutex
 	var conn net.Conn
@@ -61,7 +57,7 @@ func Run(ctx context.Context, addr string) error {
 
 			decoder := json.NewDecoder(conn)
 			for {
-				var msg wire.RunMessage
+				var msg wire.Execute
 				if err := decoder.Decode(&msg); err != nil {
 					if ctx.Err() != nil {
 						return ctx.Err()
@@ -73,10 +69,14 @@ func Run(ctx context.Context, addr string) error {
 				}
 
 				var errStr string
-				if err := libexec.Exec(ctx, exec.Command("/bin/sh", "-c", msg.Command)); err != nil {
+				cmd := exec.Command("/bin/sh", "-c", msg.Command)
+				if err := libexec.Exec(ctx, cmd); err != nil {
 					errStr = err.Error()
 				}
-				if _, err := conn.Write(must.Bytes(json.Marshal(wire.Ack{Error: errStr}))); err != nil {
+				if _, err := conn.Write(must.Bytes(json.Marshal(wire.Completed{
+					ExitCode: cmd.ProcessState.ExitCode(),
+					Error:    errStr,
+				}))); err != nil {
 					return err
 				}
 			}
