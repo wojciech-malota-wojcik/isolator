@@ -18,6 +18,7 @@ import (
 )
 
 const executorPath = ".executor"
+const capSysAdmin = 21
 
 // Start dumps executor to file, starts it, connects to it and returns client
 func Start(ctx context.Context, dir string) (conn net.Conn, closeFn func() error, err error) {
@@ -45,12 +46,28 @@ func Start(ctx context.Context, dir string) (conn net.Conn, closeFn func() error
 		return nil, nil, err
 	}
 
-	cmd = exec.Command("./" + executorPath)
+	cmd = exec.Command("/" + executorPath)
 	cmd.Dir = "/"
 	cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin", "LANG=en_US.UTF-8"}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Chroot:     dir,
-		Cloneflags: syscall.CLONE_NEWPID,
+		Cloneflags: syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWUSER,
+		// by adding CAP_SYS_ADMIN executor may mount /proc
+		AmbientCaps: []uintptr{capSysAdmin},
+		UidMappings: []syscall.SysProcIDMap{
+			{
+				HostID:      os.Getuid(),
+				ContainerID: 0,
+				Size:        1,
+			},
+		},
+		GidMappings: []syscall.SysProcIDMap{
+			{
+				HostID:      os.Getgid(),
+				ContainerID: 0,
+				Size:        1,
+			},
+		},
 	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
