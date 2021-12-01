@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"io/ioutil"
 	"net"
 	"os"
@@ -77,6 +78,9 @@ func Start(ctx context.Context, dir string) (conn net.Conn, closeFn func() error
 	}
 
 	for i := 0; i < 100; i++ {
+		if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
+			return nil, nil, errors.New("server exited before connection was made")
+		}
 		conn, err = net.Dial("unix", filepath.Join(dir, wire.SocketPath))
 		if err == nil {
 			break
