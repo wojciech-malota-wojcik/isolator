@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"errors"
+	"fmt"
 	"io/ioutil"
 	"net"
 	"os"
@@ -33,9 +33,12 @@ func Start(ctx context.Context, dir string) (conn net.Conn, closeFn func() error
 			return nil
 		}
 		if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
-			return err
+			return fmt.Errorf("sending sigterm to executor failed: %w", err)
 		}
-		return cmd.Wait()
+		if err := cmd.Wait(); err != nil {
+			return fmt.Errorf("executor failed: %w", err)
+		}
+		return nil
 	}
 	defer func() {
 		if err != nil {
@@ -74,12 +77,12 @@ func Start(ctx context.Context, dir string) (conn net.Conn, closeFn func() error
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = bytes.NewReader(nil)
 	if err := cmd.Start(); err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("executor error: %w", err)
 	}
 
 	for i := 0; i < 100; i++ {
 		if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
-			return nil, nil, errors.New("server exited before connection was made")
+			return nil, nil, fmt.Errorf("executor exited before connection was made: %w", cmd.Wait())
 		}
 		conn, err = net.Dial("unix", filepath.Join(dir, wire.SocketPath))
 		if err == nil {
@@ -92,7 +95,7 @@ func Start(ctx context.Context, dir string) (conn net.Conn, closeFn func() error
 		}
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("connecting to executor failed: %w", err)
 	}
-	return conn, closeFnTmp, err
+	return conn, closeFnTmp, nil
 }
