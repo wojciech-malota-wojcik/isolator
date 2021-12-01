@@ -51,7 +51,7 @@ func Start(ctx context.Context, dir string) (conn net.Conn, closeFn func() error
 	cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin", "LANG=en_US.UTF-8"}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Chroot:     dir,
-		Cloneflags: syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWUSER,
+		Cloneflags: syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWUSER | syscall.CLONE_NEWIPC | syscall.CLONE_NEWUTS,
 		// by adding CAP_SYS_ADMIN executor may mount /proc
 		AmbientCaps: []uintptr{capSysAdmin},
 		UidMappings: []syscall.SysProcIDMap{
