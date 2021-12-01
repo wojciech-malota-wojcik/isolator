@@ -2,10 +2,11 @@ package isolator
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/base64"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -13,7 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ridge/must"
 	"github.com/wojciech-malota-wojcik/isolator/client"
 	"github.com/wojciech-malota-wojcik/isolator/client/wire"
 	"github.com/wojciech-malota-wojcik/isolator/generated"
@@ -47,8 +47,8 @@ func Start(ctx context.Context, dir string) (c *client.Client, cleanerFn func() 
 		}
 	}()
 
-	if err := ioutil.WriteFile(fullExecutorPath, must.Bytes(base64.RawStdEncoding.DecodeString(generated.Executor)), 0o755); err != nil {
-		return nil, nil, err
+	if err := saveExecutor(fullExecutorPath); err != nil {
+		return nil, nil, fmt.Errorf("saving executor executable failed: %w", err)
 	}
 
 	cmd = exec.Command("/" + executorPath)
@@ -100,4 +100,19 @@ func Start(ctx context.Context, dir string) (c *client.Client, cleanerFn func() 
 		return nil, nil, fmt.Errorf("connecting to executor failed: %w", err)
 	}
 	return client.New(conn), cleanerFn, nil
+}
+
+func saveExecutor(path string) error {
+	gzr, err := gzip.NewReader(base64.NewDecoder(base64.RawStdEncoding, bytes.NewReader([]byte(generated.Executor))))
+	if err != nil {
+		return err
+	}
+	defer gzr.Close()
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o700)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = io.Copy(file, gzr)
+	return err
 }
