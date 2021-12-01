@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wojciech-malota-wojcik/isolator/client"
+
 	"github.com/ridge/must"
 	"github.com/wojciech-malota-wojcik/isolator/executor/wire"
 	"github.com/wojciech-malota-wojcik/isolator/generated"
@@ -22,10 +24,10 @@ const executorPath = ".executor"
 const capSysAdmin = 21
 
 // Start dumps executor to file, starts it, connects to it and returns client
-func Start(ctx context.Context, dir string) (conn net.Conn, closeFn func() error, err error) {
+func Start(ctx context.Context, dir string) (c *client.Client, cleanerFn func() error, err error) {
 	fullExecutorPath := filepath.Join(dir, executorPath)
 	var cmd *exec.Cmd
-	closeFnTmp := func() error {
+	cleanerFn = func() error {
 		defer func() {
 			_ = os.Remove(fullExecutorPath)
 		}()
@@ -42,7 +44,7 @@ func Start(ctx context.Context, dir string) (conn net.Conn, closeFn func() error
 	}
 	defer func() {
 		if err != nil {
-			_ = closeFnTmp()
+			_ = cleanerFn()
 		}
 	}()
 
@@ -80,6 +82,7 @@ func Start(ctx context.Context, dir string) (conn net.Conn, closeFn func() error
 		return nil, nil, fmt.Errorf("executor error: %w", err)
 	}
 
+	var conn net.Conn
 	for i := 0; i < 100; i++ {
 		if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
 			return nil, nil, fmt.Errorf("executor exited before connection was made: %w", cmd.Wait())
@@ -97,5 +100,5 @@ func Start(ctx context.Context, dir string) (conn net.Conn, closeFn func() error
 	if err != nil {
 		return nil, nil, fmt.Errorf("connecting to executor failed: %w", err)
 	}
-	return conn, closeFnTmp, nil
+	return client.New(conn), cleanerFn, nil
 }

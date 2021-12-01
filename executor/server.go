@@ -2,7 +2,6 @@ package executor
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,7 +11,8 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/ridge/must"
+	"github.com/wojciech-malota-wojcik/isolator/client"
+
 	"github.com/ridge/parallel"
 	"github.com/wojciech-malota-wojcik/isolator/executor/wire"
 	"github.com/wojciech-malota-wojcik/libexec"
@@ -32,12 +32,12 @@ func Run(ctx context.Context) (retErr error) {
 		}
 	}()
 
-	listener, err := net.Listen("unix", wire.SocketPath)
+	l, err := net.Listen("unix", wire.SocketPath)
 	if err != nil {
 		return fmt.Errorf("failed to start listening: %w", err)
 	}
 	defer func() {
-		_ = listener.Close()
+		_ = l.Close()
 		_ = os.Remove(wire.SocketPath)
 	}()
 
@@ -46,7 +46,7 @@ func Run(ctx context.Context) (retErr error) {
 	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
 		spawn("connection", parallel.Exit, func(ctx context.Context) error {
 			var err error
-			connTmp, err := listener.Accept()
+			connTmp, err := l.Accept()
 			if err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
@@ -58,28 +58,32 @@ func Run(ctx context.Context) (retErr error) {
 			conn = connTmp
 			mu.Unlock()
 
-			decoder := json.NewDecoder(conn)
+			c := client.New(conn)
 			for {
-				var msg wire.Execute
-				if err := decoder.Decode(&msg); err != nil {
+				msg, err := c.Receive()
+				if err != nil {
 					if ctx.Err() != nil {
 						return ctx.Err()
 					}
 					if errors.Is(err, io.EOF) {
 						return nil
 					}
-					return fmt.Errorf("message decoding failed: %w", err)
+					return fmt.Errorf("receiving message failed: %w", err)
+				}
+				execute, ok := msg.(wire.Execute)
+				if !ok {
+					return errors.New("unexpected message received")
 				}
 
 				var errStr string
-				cmd := exec.Command("/bin/sh", "-c", msg.Command)
+				cmd := exec.Command("/bin/sh", "-c", execute.Command)
 				if err := libexec.Exec(ctx, cmd); err != nil {
 					errStr = err.Error()
 				}
-				if _, err := conn.Write(must.Bytes(json.Marshal(wire.Completed{
+				if err := c.Send(wire.Completed{
 					ExitCode: cmd.ProcessState.ExitCode(),
 					Error:    errStr,
-				}))); err != nil {
+				}); err != nil {
 					return fmt.Errorf("command status reporting failed: %w", err)
 				}
 			}
