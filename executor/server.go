@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -18,20 +19,22 @@ import (
 )
 
 // Run runs isolator server
-func Run(ctx context.Context) error {
+func Run(ctx context.Context) (retErr error) {
 	if err := os.MkdirAll("/proc", 0o755); err != nil && !os.IsExist(err) {
 		return err
 	}
 	if err := syscall.Mount("none", "/proc", "proc", 0, ""); err != nil {
-		return err
+		return fmt.Errorf("mounting proc failed: %w", err)
 	}
 	defer func() {
-		_ = syscall.Unmount("/proc", 0)
+		if err := syscall.Unmount("/proc", 0); retErr == nil {
+			retErr = err
+		}
 	}()
 
 	listener, err := net.Listen("unix", wire.SocketPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to start listening: %w", err)
 	}
 	defer func() {
 		_ = listener.Close()
@@ -48,7 +51,7 @@ func Run(ctx context.Context) error {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
-				return err
+				return fmt.Errorf("accepting connection failed: %w", err)
 			}
 
 			mu.Lock()
@@ -65,7 +68,7 @@ func Run(ctx context.Context) error {
 					if errors.Is(err, io.EOF) {
 						return nil
 					}
-					return err
+					return fmt.Errorf("message decoding failed: %w", err)
 				}
 
 				var errStr string
@@ -77,7 +80,7 @@ func Run(ctx context.Context) error {
 					ExitCode: cmd.ProcessState.ExitCode(),
 					Error:    errStr,
 				}))); err != nil {
-					return err
+					return fmt.Errorf("command status reporting failed: %w", err)
 				}
 			}
 		})
