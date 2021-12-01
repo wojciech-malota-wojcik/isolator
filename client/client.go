@@ -7,7 +7,7 @@ import (
 	"reflect"
 
 	"github.com/ridge/must"
-	"github.com/wojciech-malota-wojcik/isolator/executor/wire"
+	"github.com/wojciech-malota-wojcik/isolator/client/wire"
 )
 
 type message struct {
@@ -56,12 +56,16 @@ func (c *Client) Receive() (interface{}, error) {
 }
 
 func typeToInstance(tName string) (interface{}, error) {
+	var msg interface{}
 	switch tName {
 	case "Execute":
-		return &wire.Execute{}, nil
+		msg = &wire.Execute{}
 	case "Completed":
-		return &wire.Completed{}, nil
+		msg = &wire.Completed{}
+	case "Log":
+		msg = &wire.Log{}
 	default:
 		return nil, fmt.Errorf("unrecognized type: %s", tName)
 	}
+	return msg, nil
 }

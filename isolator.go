@@ -13,10 +13,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wojciech-malota-wojcik/isolator/client"
-
 	"github.com/ridge/must"
-	"github.com/wojciech-malota-wojcik/isolator/executor/wire"
+	"github.com/wojciech-malota-wojcik/isolator/client"
+	"github.com/wojciech-malota-wojcik/isolator/client/wire"
 	"github.com/wojciech-malota-wojcik/isolator/generated"
 )
 
