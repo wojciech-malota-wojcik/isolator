@@ -24,11 +24,64 @@ import (
 const capSysAdmin = 21
 const executorPath = ".executor"
 
+type dev struct {
+	Type  uint32
+	Mode  os.FileMode
+	Major int64
+	Minor int64
+}
+
+var devs = map[string]dev{
+	"console": {
+		Type:  syscall.S_IFCHR,
+		Mode:  0o622,
+		Major: 5,
+		Minor: 1,
+	},
+	"null": {
+		Type:  syscall.S_IFCHR,
+		Mode:  0o666,
+		Major: 1,
+		Minor: 3,
+	},
+	"zero": {
+		Type:  syscall.S_IFCHR,
+		Mode:  0o666,
+		Major: 1,
+		Minor: 5,
+	},
+	"ptmx": {
+		Type:  syscall.S_IFCHR,
+		Mode:  0o666,
+		Major: 5,
+		Minor: 2,
+	},
+	"tty": {
+		Type:  syscall.S_IFCHR,
+		Mode:  0o666,
+		Major: 5,
+		Minor: 0,
+	},
+	"random": {
+		Type:  syscall.S_IFCHR,
+		Mode:  0o444,
+		Major: 1,
+		Minor: 8,
+	},
+	"urandom": {
+		Type:  syscall.S_IFCHR,
+		Mode:  0o444,
+		Major: 1,
+		Minor: 9,
+	},
+}
+
 // Start dumps executor to file, starts it, connects to it and returns client
 func Start(ctx context.Context, dir string) (c *client.Client, cleanerFn func() error, err error) {
 	log := logger.Get(ctx)
 
 	fullExecutorPath := filepath.Join(dir, executorPath)
+	devDir := filepath.Join(dir, "root", "dev")
 	var cmd *exec.Cmd
 	errCh := make(chan error, 1)
 	started := make(chan struct{})
@@ -39,6 +92,19 @@ func Start(ctx context.Context, dir string) (c *client.Client, cleanerFn func() 
 			}
 			if err := os.Remove(filepath.Join(dir, wire.SocketPath)); err != nil && !os.IsNotExist(err) {
 				log.Error("Removing unix socket file failed", zap.Error(err))
+			}
+		}()
+		defer func() {
+			devs, err := os.ReadDir(devDir)
+			if err != nil {
+				log.Error("Reading list of devs failed", zap.Error(err))
+				return
+			}
+			for _, dev := range devs {
+				path := filepath.Join(devDir, dev.Name())
+				if err := os.Remove(path); err != nil {
+					log.Error("Failed to remove "+path, zap.Error(err))
+				}
 			}
 		}()
 		if cmd == nil {
@@ -75,6 +141,20 @@ func Start(ctx context.Context, dir string) (c *client.Client, cleanerFn func() 
 
 	if err := saveExecutor(fullExecutorPath); err != nil {
 		return nil, nil, fmt.Errorf("saving executor executable failed: %w", err)
+	}
+
+	// Executor in namespace has no permissions to populate devs so it has to be done here
+	if err := os.MkdirAll(devDir, 0o755); err != nil && !os.IsExist(err) {
+		return nil, nil, err
+	}
+	for name, info := range devs {
+		devPath := filepath.Join(devDir, name)
+		if err := os.Remove(devPath); err != nil && !os.IsNotExist(err) {
+			return nil, nil, err
+		}
+		if err := syscall.Mknod(devPath, info.Type|uint32(info.Mode), makeDev(info.Major, info.Minor)); err != nil {
+			return nil, nil, fmt.Errorf("creating dev/null device failed: %w", err)
+		}
 	}
 
 	cmd = exec.Command(fullExecutorPath)
@@ -151,4 +231,8 @@ func saveExecutor(path string) error {
 	defer file.Close()
 	_, err = io.Copy(file, gzr)
 	return err
+}
+
+func makeDev(major, minor int64) int {
+	return int(((major & 0xfff) << 8) | (minor & 0xff) | ((major &^ 0xfff) << 32) | ((minor & 0xfffff00) << 12))
 }
