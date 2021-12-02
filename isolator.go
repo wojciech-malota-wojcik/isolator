@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -77,87 +78,82 @@ var devs = map[string]dev{
 }
 
 // Start dumps executor to file, starts it, connects to it and returns client
-func Start(ctx context.Context, dir string) (c *client.Client, cleanerFn func() error, err error) {
+func Start(ctx context.Context, dir string) (c *client.Client, cleanerFn func() error, retErr error) {
 	log := logger.Get(ctx)
 
-	fullExecutorPath := filepath.Join(dir, executorPath)
-	devDir := filepath.Join(dir, "root", "dev")
-	var cmd *exec.Cmd
-	errCh := make(chan error, 1)
-	started := make(chan struct{})
+	var terminateExecutor func() error
+	var cleanDevs func() error
 	cleanerFnTmp := func() error {
-		defer func() {
-			if err := os.Remove(fullExecutorPath); err != nil {
-				log.Error("Removing executor file failed", zap.Error(err))
-			}
-			if err := os.Remove(filepath.Join(dir, wire.SocketPath)); err != nil && !os.IsNotExist(err) {
-				log.Error("Removing unix socket file failed", zap.Error(err))
-			}
-		}()
-		defer func() {
-			devs, err := os.ReadDir(devDir)
-			if err != nil {
-				log.Error("Reading list of devs failed", zap.Error(err))
-				return
-			}
-			for _, dev := range devs {
-				path := filepath.Join(devDir, dev.Name())
-				if err := os.Remove(path); err != nil {
-					log.Error("Failed to remove "+path, zap.Error(err))
-				}
-			}
-		}()
-		if cmd == nil {
-			return nil
-		}
-
-		select {
-		case err := <-errCh:
-			return fmt.Errorf("executor failed: %w", err)
-		case <-started:
-			// Executor runs with PID 1 inside namespace. From the perspective of kernel it is an init process.
-			// Init process receives only signals it subscribed to. So it may happen that SIGTERM is sent before executor
-			// subscribes to it. That's why SIGTERM is sent periodically here.
-			for {
-				if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
-					return fmt.Errorf("sending sigterm to executor failed: %w", err)
-				}
-				select {
-				case err := <-errCh:
-					if err != nil {
-						return fmt.Errorf("executor failed: %w", err)
-					}
-					return nil
-				case <-time.After(100 * time.Millisecond):
-				}
+		failed := false
+		if terminateExecutor != nil {
+			if err := terminateExecutor(); err != nil {
+				log.Error("Terminating executor failed", zap.Error(err))
+				failed = true
 			}
 		}
+		if cleanDevs != nil {
+			if err := cleanDevs(); err != nil {
+				log.Error("Cleaning devs failed", zap.Error(err))
+				failed = true
+			}
+		}
+		if failed {
+			return errors.New("cleaning executor failed")
+		}
+		return nil
 	}
 	defer func() {
-		if err != nil {
+		if retErr != nil {
 			_ = cleanerFnTmp()
 		}
 	}()
 
-	if err := saveExecutor(fullExecutorPath); err != nil {
-		return nil, nil, fmt.Errorf("saving executor executable failed: %w", err)
-	}
-
 	// Executor in namespace has no permissions to populate devs so it has to be done here
-	if err := os.MkdirAll(devDir, 0o755); err != nil && !os.IsExist(err) {
+	var err error
+	cleanDevs, err = populateDev(filepath.Join(dir, "root", "dev"), log)
+	if err != nil {
 		return nil, nil, err
 	}
-	for name, info := range devs {
-		devPath := filepath.Join(devDir, name)
-		if err := os.Remove(devPath); err != nil && !os.IsNotExist(err) {
-			return nil, nil, err
+
+	var errCh <-chan error
+	terminateExecutor, errCh = startExecutor(dir, log)
+
+	var conn net.Conn
+	for i := 0; i < 100; i++ {
+		select {
+		case err := <-errCh:
+			return nil, nil, fmt.Errorf("executor exited before connection was made: %w", err)
+		default:
 		}
-		if err := syscall.Mknod(devPath, info.Type|uint32(info.Mode), makeDev(info.Major, info.Minor)); err != nil {
-			return nil, nil, fmt.Errorf("creating dev/null device failed: %w", err)
+
+		conn, retErr = net.Dial("unix", filepath.Join(dir, wire.SocketPath))
+		if retErr == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-time.After(100 * time.Millisecond):
 		}
 	}
+	if retErr != nil {
+		return nil, nil, fmt.Errorf("connecting to executor failed: %w", retErr)
+	}
+	return client.New(conn), cleanerFnTmp, nil
+}
 
-	cmd = exec.Command(fullExecutorPath)
+func startExecutor(dir string, log *zap.Logger) (func() error, <-chan error) {
+	errCh := make(chan error, 1)
+
+	executorPath := filepath.Join(dir, executorPath)
+
+	if err := saveExecutor(executorPath); err != nil {
+		errCh <- fmt.Errorf("saving executor executable failed: %w", err)
+		close(errCh)
+		return nil, errCh
+	}
+
+	cmd := exec.Command(executorPath)
 	cmd.Dir = dir
 	cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin", "LANG=en_US.UTF-8"}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -182,6 +178,8 @@ func Start(ctx context.Context, dir string) (c *client.Client, cleanerFn func() 
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = bytes.NewReader(nil)
+
+	started := make(chan struct{})
 	go func() {
 		err := cmd.Start()
 		if err != nil {
@@ -194,28 +192,81 @@ func Start(ctx context.Context, dir string) (c *client.Client, cleanerFn func() 
 		close(errCh)
 	}()
 
-	var conn net.Conn
-	for i := 0; i < 100; i++ {
+	return func() (retErr error) {
+		defer func() {
+			if err := os.Remove(executorPath); err != nil && !os.IsNotExist(err) {
+				log.Error("Removing executor file failed", zap.Error(err))
+				if retErr == nil {
+					retErr = err
+				}
+			}
+			if err := os.Remove(filepath.Join(dir, wire.SocketPath)); err != nil && !os.IsNotExist(err) {
+				log.Error("Removing unix socket file failed", zap.Error(err))
+				if retErr == nil {
+					retErr = err
+				}
+			}
+		}()
+
 		select {
 		case err := <-errCh:
-			return nil, nil, fmt.Errorf("executor exited before connection was made: %w", err)
-		default:
+			return fmt.Errorf("executor failed: %w", err)
+		case <-started:
+			// Executor runs with PID 1 inside namespace. From the perspective of kernel it is an init process.
+			// Init process receives only signals it subscribed to. So it may happen that SIGTERM is sent before executor
+			// subscribes to it. That's why SIGTERM is sent periodically here.
+			for {
+				if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+					return fmt.Errorf("sending sigterm to executor failed: %w", err)
+				}
+				select {
+				case err := <-errCh:
+					if err != nil {
+						return fmt.Errorf("executor failed: %w", err)
+					}
+					return nil
+				case <-time.After(100 * time.Millisecond):
+				}
+			}
 		}
+	}, errCh
+}
 
-		conn, err = net.Dial("unix", filepath.Join(dir, wire.SocketPath))
-		if err == nil {
-			break
+func populateDev(devDir string, log *zap.Logger) (func() error, error) {
+	if err := os.MkdirAll(devDir, 0o755); err != nil && !os.IsExist(err) {
+		return nil, err
+	}
+	for name, info := range devs {
+		devPath := filepath.Join(devDir, name)
+		if err := os.Remove(devPath); err != nil && !os.IsNotExist(err) {
+			return nil, err
 		}
-		select {
-		case <-ctx.Done():
-			return nil, nil, ctx.Err()
-		case <-time.After(100 * time.Millisecond):
+		if err := syscall.Mknod(devPath, info.Type|uint32(info.Mode), makeDev(info.Major, info.Minor)); err != nil {
+			return nil, fmt.Errorf("creating dev/null device failed: %w", err)
 		}
 	}
-	if err != nil {
-		return nil, nil, fmt.Errorf("connecting to executor failed: %w", err)
-	}
-	return client.New(conn), cleanerFnTmp, nil
+	return func() error {
+		devs, err := os.ReadDir(devDir)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			log.Error("Reading list of devs failed", zap.Error(err))
+			return err
+		}
+		failed := false
+		for _, dev := range devs {
+			path := filepath.Join(devDir, dev.Name())
+			if err := os.Remove(path); err != nil {
+				log.Error("Failed to remove "+path, zap.Error(err))
+				failed = true
+			}
+		}
+		if failed {
+			return errors.New("cleaning devs failed")
+		}
+		return nil
+	}, nil
 }
 
 func saveExecutor(path string) error {
