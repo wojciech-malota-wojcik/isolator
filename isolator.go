@@ -5,7 +5,6 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -18,8 +17,6 @@ import (
 	"github.com/wojciech-malota-wojcik/isolator/client"
 	"github.com/wojciech-malota-wojcik/isolator/client/wire"
 	"github.com/wojciech-malota-wojcik/isolator/generated"
-	"github.com/wojciech-malota-wojcik/logger"
-	"go.uber.org/zap"
 )
 
 const capSysAdmin = 21
@@ -27,19 +24,12 @@ const executorPath = ".executor"
 
 // Start dumps executor to file, starts it, connects to it and returns client
 func Start(ctx context.Context, dir string) (c *client.Client, cleanerFn func() error, retErr error) {
-	log := logger.Get(ctx)
-
 	var terminateExecutor func() error
 	cleanerFnTmp := func() error {
-		failed := false
 		if terminateExecutor != nil {
 			if err := terminateExecutor(); err != nil {
-				log.Error("Terminating executor failed", zap.Error(err))
-				failed = true
+				return fmt.Errorf("terminating executor failed: %w", err)
 			}
-		}
-		if failed {
-			return errors.New("cleaning executor failed")
 		}
 		return nil
 	}
@@ -50,7 +40,7 @@ func Start(ctx context.Context, dir string) (c *client.Client, cleanerFn func() 
 	}()
 
 	var errCh <-chan error
-	terminateExecutor, errCh = startExecutor(dir, log)
+	terminateExecutor, errCh = startExecutor(dir)
 
 	var conn net.Conn
 	for i := 0; i < 100; i++ {
@@ -76,7 +66,7 @@ func Start(ctx context.Context, dir string) (c *client.Client, cleanerFn func() 
 	return client.New(conn), cleanerFnTmp, nil
 }
 
-func startExecutor(dir string, log *zap.Logger) (func() error, <-chan error) {
+func startExecutor(dir string) (func() error, <-chan error) {
 	errCh := make(chan error, 1)
 
 	executorPath := filepath.Join(dir, executorPath)
@@ -130,13 +120,11 @@ func startExecutor(dir string, log *zap.Logger) (func() error, <-chan error) {
 	return func() (retErr error) {
 		defer func() {
 			if err := os.Remove(executorPath); err != nil && !os.IsNotExist(err) {
-				log.Error("Removing executor file failed", zap.Error(err))
 				if retErr == nil {
 					retErr = err
 				}
 			}
 			if err := os.Remove(filepath.Join(dir, wire.SocketPath)); err != nil && !os.IsNotExist(err) {
-				log.Error("Removing unix socket file failed", zap.Error(err))
 				if retErr == nil {
 					retErr = err
 				}
