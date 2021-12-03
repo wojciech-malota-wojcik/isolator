@@ -78,6 +78,19 @@ func Run(ctx context.Context) (retErr error) {
 		}
 	}()
 
+	cleanDevs, err := populateDev(log)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := cleanDevs(); err != nil {
+			log.Error("Cleaning dev failed", zap.Error(err))
+			if retErr == nil {
+				retErr = err
+			}
+		}
+	}()
+
 	// starting unix socket before pivoting so we may create it in upper directory
 	l, err := net.Listen("unix", filepath.Join("..", wire.SocketPath))
 	if err != nil {
@@ -222,6 +235,53 @@ func mountProc() (func() error, error) {
 		// no matter if we have already pivoted or not, proc is in current working dir and it's possible to unmount it
 		if err := syscall.Unmount("proc", 0); err != nil {
 			return fmt.Errorf("unmounting proc failed: %w", err)
+		}
+		return nil
+	}, nil
+}
+
+func populateDev(log *zap.Logger) (func() error, error) {
+	devDir := "dev"
+	if err := os.MkdirAll(devDir, 0o755); err != nil && !os.IsExist(err) {
+		return nil, err
+	}
+	for _, dev := range []string{"console", "null", "zero", "random", "urandom"} {
+		devPath := filepath.Join(devDir, dev)
+		f, err := os.OpenFile(devPath, os.O_CREATE|os.O_RDONLY, 0o644)
+		if err != nil {
+			return nil, fmt.Errorf("creating dev/%s file failed: %w", dev, err)
+		}
+		if err := f.Close(); err != nil {
+			return nil, fmt.Errorf("closing dev/%s file failed: %w", dev, err)
+		}
+		if err := syscall.Mount(filepath.Join("/", devPath), devPath, "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
+			return nil, fmt.Errorf("binding dev/%s device failed: %w", dev, err)
+		}
+	}
+	return func() error {
+		devs, err := os.ReadDir(devDir)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			log.Error("Reading list of devs failed", zap.Error(err))
+			return err
+		}
+		failed := false
+		for _, dev := range devs {
+			path := filepath.Join(devDir, dev.Name())
+			if err := syscall.Unmount(path, 0); err != nil {
+				log.Error("Failed to unmount "+path, zap.Error(err))
+				failed = true
+				continue
+			}
+			if err := os.Remove(path); err != nil {
+				log.Error("Failed to remove "+path, zap.Error(err))
+				failed = true
+			}
+		}
+		if failed {
+			return errors.New("cleaning devs failed")
 		}
 		return nil
 	}, nil

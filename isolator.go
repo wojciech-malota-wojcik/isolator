@@ -25,75 +25,16 @@ import (
 const capSysAdmin = 21
 const executorPath = ".executor"
 
-type dev struct {
-	Type  uint32
-	Mode  os.FileMode
-	Major int64
-	Minor int64
-}
-
-var devs = map[string]dev{
-	"console": {
-		Type:  syscall.S_IFCHR,
-		Mode:  0o622,
-		Major: 5,
-		Minor: 1,
-	},
-	"null": {
-		Type:  syscall.S_IFCHR,
-		Mode:  0o666,
-		Major: 1,
-		Minor: 3,
-	},
-	"zero": {
-		Type:  syscall.S_IFCHR,
-		Mode:  0o666,
-		Major: 1,
-		Minor: 5,
-	},
-	"ptmx": {
-		Type:  syscall.S_IFCHR,
-		Mode:  0o666,
-		Major: 5,
-		Minor: 2,
-	},
-	"tty": {
-		Type:  syscall.S_IFCHR,
-		Mode:  0o666,
-		Major: 5,
-		Minor: 0,
-	},
-	"random": {
-		Type:  syscall.S_IFCHR,
-		Mode:  0o444,
-		Major: 1,
-		Minor: 8,
-	},
-	"urandom": {
-		Type:  syscall.S_IFCHR,
-		Mode:  0o444,
-		Major: 1,
-		Minor: 9,
-	},
-}
-
 // Start dumps executor to file, starts it, connects to it and returns client
 func Start(ctx context.Context, dir string) (c *client.Client, cleanerFn func() error, retErr error) {
 	log := logger.Get(ctx)
 
 	var terminateExecutor func() error
-	var cleanDevs func() error
 	cleanerFnTmp := func() error {
 		failed := false
 		if terminateExecutor != nil {
 			if err := terminateExecutor(); err != nil {
 				log.Error("Terminating executor failed", zap.Error(err))
-				failed = true
-			}
-		}
-		if cleanDevs != nil {
-			if err := cleanDevs(); err != nil {
-				log.Error("Cleaning devs failed", zap.Error(err))
 				failed = true
 			}
 		}
@@ -107,13 +48,6 @@ func Start(ctx context.Context, dir string) (c *client.Client, cleanerFn func() 
 			_ = cleanerFnTmp()
 		}
 	}()
-
-	// Executor in namespace has no permissions to populate devs so it has to be done here
-	var err error
-	cleanDevs, err = populateDev(filepath.Join(dir, "root", "dev"), log)
-	if err != nil {
-		return nil, nil, err
-	}
 
 	var errCh <-chan error
 	terminateExecutor, errCh = startExecutor(dir, log)
@@ -159,6 +93,7 @@ func startExecutor(dir string, log *zap.Logger) (func() error, <-chan error) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWUSER | syscall.CLONE_NEWIPC | syscall.CLONE_NEWUTS,
 		// by adding CAP_SYS_ADMIN executor may mount /proc
+		// by adding CAP_MKNOD executor may populate /dev
 		AmbientCaps: []uintptr{capSysAdmin},
 		UidMappings: []syscall.SysProcIDMap{
 			{
@@ -235,43 +170,6 @@ func startExecutor(dir string, log *zap.Logger) (func() error, <-chan error) {
 	}, errCh
 }
 
-func populateDev(devDir string, log *zap.Logger) (func() error, error) {
-	if err := os.MkdirAll(devDir, 0o755); err != nil && !os.IsExist(err) {
-		return nil, err
-	}
-	for name, info := range devs {
-		devPath := filepath.Join(devDir, name)
-		if err := os.Remove(devPath); err != nil && !os.IsNotExist(err) {
-			return nil, err
-		}
-		if err := syscall.Mknod(devPath, info.Type|uint32(info.Mode), makeDev(info.Major, info.Minor)); err != nil {
-			return nil, fmt.Errorf("creating dev/null device failed: %w", err)
-		}
-	}
-	return func() error {
-		devs, err := os.ReadDir(devDir)
-		if os.IsNotExist(err) {
-			return nil
-		}
-		if err != nil {
-			log.Error("Reading list of devs failed", zap.Error(err))
-			return err
-		}
-		failed := false
-		for _, dev := range devs {
-			path := filepath.Join(devDir, dev.Name())
-			if err := os.Remove(path); err != nil {
-				log.Error("Failed to remove "+path, zap.Error(err))
-				failed = true
-			}
-		}
-		if failed {
-			return errors.New("cleaning devs failed")
-		}
-		return nil
-	}, nil
-}
-
 func saveExecutor(path string) error {
 	gzr, err := gzip.NewReader(base64.NewDecoder(base64.RawStdEncoding, bytes.NewReader([]byte(generated.Executor))))
 	if err != nil {
@@ -285,8 +183,4 @@ func saveExecutor(path string) error {
 	defer file.Close()
 	_, err = io.Copy(file, gzr)
 	return err
-}
-
-func makeDev(major, minor int64) int {
-	return int(((major & 0xfff) << 8) | (minor & 0xff) | ((major &^ 0xfff) << 32) | ((minor & 0xfffff00) << 12))
 }

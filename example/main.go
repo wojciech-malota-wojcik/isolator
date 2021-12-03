@@ -11,11 +11,10 @@ import (
 )
 
 func main() {
-	// Starting isolator. If passed ctx is canceled isolator.Start breaks and returns error.
+	// Starting isolator. If passed ctx is canceled, isolator.Start breaks and returns error.
 	// Isolator creates `root` directory under one passed to `isolator.Start`. The `root` directory is mounted as `/`.
 	// inside container.
 	// It is assumed that `root` contains `bin/sh` shell and all the required libraries. Without them it will fail.
-	// Isolator makes a lot of privileged operation so you have to start it using root account.
 	isolator, terminateIsolator, err := isolator.Start(logger.WithLogger(context.Background(), logger.New()), "/tmp/example")
 	if err != nil {
 		panic(err)
