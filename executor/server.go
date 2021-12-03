@@ -21,41 +21,6 @@ import (
 	"go.uber.org/zap"
 )
 
-type logTransmitter struct {
-	client *client.Client
-	stream wire.Stream
-
-	buf []byte
-}
-
-func (lt *logTransmitter) Write(data []byte) (int, error) {
-	length := len(lt.buf) + len(data)
-	if length < 100 {
-		lt.buf = append(lt.buf, data...)
-		return len(data), nil
-	}
-	buf := make([]byte, length)
-	copy(buf, lt.buf)
-	copy(buf[len(lt.buf):], data)
-	err := lt.client.Send(wire.Log{Stream: lt.stream, Text: string(buf)})
-	if err != nil {
-		return 0, err
-	}
-	lt.buf = make([]byte, 0, len(lt.buf))
-	return len(data), nil
-}
-
-func (lt *logTransmitter) Flush() error {
-	if len(lt.buf) == 0 {
-		return nil
-	}
-	if err := lt.client.Send(wire.Log{Stream: lt.stream, Text: string(lt.buf)}); err != nil {
-		return err
-	}
-	lt.buf = make([]byte, 0, len(lt.buf))
-	return nil
-}
-
 // Run runs isolator server
 func Run(ctx context.Context) (retErr error) {
 	log := logger.Get(ctx)
@@ -63,33 +28,12 @@ func Run(ctx context.Context) (retErr error) {
 	if err := prepareNewRoot(); err != nil {
 		return fmt.Errorf("preparing new root filesystem failed: %w", err)
 	}
-
-	// Looks like PivotRoot drops CAP_SYS_ADMIN for some weird reason so mounting proc has to be done before that
-	unmountProc, err := mountProc()
-	if err != nil {
+	if err := mountProc(); err != nil {
 		return err
 	}
-	defer func() {
-		if err := unmountProc(); err != nil {
-			log.Error("Unmounting proc failed", zap.Error(err))
-			if retErr == nil {
-				retErr = err
-			}
-		}
-	}()
-
-	cleanDevs, err := populateDev(log)
-	if err != nil {
+	if err := populateDev(); err != nil {
 		return err
 	}
-	defer func() {
-		if err := cleanDevs(); err != nil {
-			log.Error("Cleaning dev failed", zap.Error(err))
-			if retErr == nil {
-				retErr = err
-			}
-		}
-	}()
 
 	// starting unix socket before pivoting so we may create it in upper directory
 	l, err := net.Listen("unix", filepath.Join("..", wire.SocketPath))
@@ -223,68 +167,38 @@ func prepareNewRoot() error {
 	return os.Chdir("root")
 }
 
-func mountProc() (func() error, error) {
+func mountProc() error {
 	if err := os.Mkdir("proc", 0o755); err != nil && !os.IsExist(err) {
-		return nil, err
+		return err
 	}
 	if err := syscall.Mount("none", "proc", "proc", 0, ""); err != nil {
-		return nil, fmt.Errorf("mounting proc failed: %w", err)
+		return fmt.Errorf("mounting proc failed: %w", err)
 	}
-
-	return func() error {
-		// no matter if we have already pivoted or not, proc is in current working dir and it's possible to unmount it
-		if err := syscall.Unmount("proc", 0); err != nil {
-			return fmt.Errorf("unmounting proc failed: %w", err)
-		}
-		return nil
-	}, nil
+	return nil
 }
 
-func populateDev(log *zap.Logger) (func() error, error) {
+func populateDev() error {
 	devDir := "dev"
 	if err := os.MkdirAll(devDir, 0o755); err != nil && !os.IsExist(err) {
-		return nil, err
+		return err
+	}
+	if err := syscall.Mount("none", devDir, "tmpfs", 0, ""); err != nil {
+		return fmt.Errorf("mounting tmpfs for dev failed: %w", err)
 	}
 	for _, dev := range []string{"console", "null", "zero", "random", "urandom"} {
 		devPath := filepath.Join(devDir, dev)
 		f, err := os.OpenFile(devPath, os.O_CREATE|os.O_RDONLY, 0o644)
 		if err != nil {
-			return nil, fmt.Errorf("creating dev/%s file failed: %w", dev, err)
+			return fmt.Errorf("creating dev/%s file failed: %w", dev, err)
 		}
 		if err := f.Close(); err != nil {
-			return nil, fmt.Errorf("closing dev/%s file failed: %w", dev, err)
+			return fmt.Errorf("closing dev/%s file failed: %w", dev, err)
 		}
 		if err := syscall.Mount(filepath.Join("/", devPath), devPath, "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
-			return nil, fmt.Errorf("binding dev/%s device failed: %w", dev, err)
+			return fmt.Errorf("binding dev/%s device failed: %w", dev, err)
 		}
 	}
-	return func() error {
-		devs, err := os.ReadDir(devDir)
-		if os.IsNotExist(err) {
-			return nil
-		}
-		if err != nil {
-			log.Error("Reading list of devs failed", zap.Error(err))
-			return err
-		}
-		failed := false
-		for _, dev := range devs {
-			path := filepath.Join(devDir, dev.Name())
-			if err := syscall.Unmount(path, 0); err != nil {
-				log.Error("Failed to unmount "+path, zap.Error(err))
-				failed = true
-				continue
-			}
-			if err := os.Remove(path); err != nil {
-				log.Error("Failed to remove "+path, zap.Error(err))
-				failed = true
-			}
-		}
-		if failed {
-			return errors.New("cleaning devs failed")
-		}
-		return nil
-	}, nil
+	return nil
 }
 
 func pivotRoot() error {
@@ -308,4 +222,39 @@ func configureDNS() error {
 		return err
 	}
 	return ioutil.WriteFile("etc/resolv.conf", []byte("nameserver 8.8.8.8\nnameserver 8.8.4.4\n"), 0o644)
+}
+
+type logTransmitter struct {
+	client *client.Client
+	stream wire.Stream
+
+	buf []byte
+}
+
+func (lt *logTransmitter) Write(data []byte) (int, error) {
+	length := len(lt.buf) + len(data)
+	if length < 100 {
+		lt.buf = append(lt.buf, data...)
+		return len(data), nil
+	}
+	buf := make([]byte, length)
+	copy(buf, lt.buf)
+	copy(buf[len(lt.buf):], data)
+	err := lt.client.Send(wire.Log{Stream: lt.stream, Text: string(buf)})
+	if err != nil {
+		return 0, err
+	}
+	lt.buf = make([]byte, 0, len(lt.buf))
+	return len(data), nil
+}
+
+func (lt *logTransmitter) Flush() error {
+	if len(lt.buf) == 0 {
+		return nil
+	}
+	if err := lt.client.Send(wire.Log{Stream: lt.stream, Text: string(lt.buf)}); err != nil {
+		return err
+	}
+	lt.buf = make([]byte, 0, len(lt.buf))
+	return nil
 }
