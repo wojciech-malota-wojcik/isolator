@@ -155,7 +155,7 @@ func startExecutor(dir string, log *zap.Logger) (func() error, <-chan error) {
 
 	cmd := exec.Command(executorPath)
 	cmd.Dir = dir
-	cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin", "LANG=en_US.UTF-8"}
+	cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWUSER | syscall.CLONE_NEWIPC | syscall.CLONE_NEWUTS,
 		// by adding CAP_SYS_ADMIN executor may mount /proc
@@ -210,6 +210,9 @@ func startExecutor(dir string, log *zap.Logger) (func() error, <-chan error) {
 
 		select {
 		case err := <-errCh:
+			if err == nil {
+				return nil
+			}
 			return fmt.Errorf("executor failed: %w", err)
 		case <-started:
 			// Executor runs with PID 1 inside namespace. From the perspective of kernel it is an init process.
