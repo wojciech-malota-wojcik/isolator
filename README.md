@@ -19,5 +19,6 @@ Take a look at [example/main.go](example/main.go)
 - communication is done in JSON format using unix socket, library returns ready to use client,
 - logs printed by executed command are transmitted back to the caller,
 - `/proc` is mounted inside container and populated with in-container processes,
-- `/dev` is populated with basic devices: `null`, `zero`, `random`, `urandom` by binding them to those existing on host
+- `/dev` is populated with basic devices: `null`, `zero`, `random`, `urandom` by binding them to those existing on host,
+- `tmpfs` is mounted on `/tmp`,
 - DNS inside container is set to `8.8.8.8` and `8.8.4.4` by populating `/etc/resolv.conf`.

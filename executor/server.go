@@ -31,6 +31,9 @@ func Run(ctx context.Context) (retErr error) {
 	if err := mountProc(); err != nil {
 		return err
 	}
+	if err := mountTmp(); err != nil {
+		return err
+	}
 	if err := populateDev(); err != nil {
 		return err
 	}
@@ -173,6 +176,16 @@ func mountProc() error {
 	}
 	if err := syscall.Mount("none", "proc", "proc", 0, ""); err != nil {
 		return fmt.Errorf("mounting proc failed: %w", err)
+	}
+	return nil
+}
+
+func mountTmp() error {
+	if err := os.Mkdir("tmp", 0o777|os.ModeSticky); err != nil && !os.IsExist(err) {
+		return err
+	}
+	if err := syscall.Mount("none", "tmp", "tmpfs", 0, ""); err != nil {
+		return fmt.Errorf("mounting tmp failed: %w", err)
 	}
 	return nil
 }
