@@ -7,7 +7,6 @@ import (
 
 	"github.com/wojciech-malota-wojcik/isolator"
 	"github.com/wojciech-malota-wojcik/isolator/client/wire"
-	"github.com/wojciech-malota-wojcik/logger"
 )
 
 func main() {
@@ -15,7 +14,7 @@ func main() {
 	// Isolator creates `root` directory under one passed to `isolator.Start`. The `root` directory is mounted as `/`.
 	// inside container.
 	// It is assumed that `root` contains `bin/sh` shell and all the required libraries. Without them it will fail.
-	isolator, terminateIsolator, err := isolator.Start(logger.WithLogger(context.Background(), logger.New()), "/tmp/example")
+	isolator, terminateIsolator, err := isolator.Start(context.Background(), "/tmp/example")
 	if err != nil {
 		panic(err)
 	}

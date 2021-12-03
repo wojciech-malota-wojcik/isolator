@@ -17,14 +17,10 @@ import (
 	"github.com/wojciech-malota-wojcik/isolator/client"
 	"github.com/wojciech-malota-wojcik/isolator/client/wire"
 	"github.com/wojciech-malota-wojcik/libexec"
-	"github.com/wojciech-malota-wojcik/logger"
-	"go.uber.org/zap"
 )
 
 // Run runs isolator server
 func Run(ctx context.Context) (retErr error) {
-	log := logger.Get(ctx)
-
 	if err := prepareNewRoot(); err != nil {
 		return fmt.Errorf("preparing new root filesystem failed: %w", err)
 	}
@@ -45,12 +41,7 @@ func Run(ctx context.Context) (retErr error) {
 	}
 	defer func() {
 		if l != nil {
-			if err := l.Close(); err != nil {
-				log.Error("Closing listening socket failed", zap.Error(err))
-				if retErr == nil {
-					retErr = err
-				}
-			}
+			_ = l.Close()
 		}
 	}()
 
@@ -117,12 +108,8 @@ func Run(ctx context.Context) (retErr error) {
 				if err := libexec.Exec(ctx, cmd); err != nil {
 					errStr = err.Error()
 				}
-				if err := outTransmitter.Flush(); err != nil {
-					log.Error("Flushing stdout log failed", zap.Error(err))
-				}
-				if err := errTransmitter.Flush(); err != nil {
-					log.Error("Flushing stderr log failed", zap.Error(err))
-				}
+				_ = outTransmitter.Flush()
+				_ = errTransmitter.Flush()
 
 				if err := c.Send(wire.Completed{
 					ExitCode: cmd.ProcessState.ExitCode(),
