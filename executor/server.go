@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"os"
 	"os/exec"
@@ -95,6 +96,10 @@ func Run(ctx context.Context) (retErr error) {
 
 	if err := pivotRoot(); err != nil {
 		return fmt.Errorf("pivoting root filesystem failed: %w", err)
+	}
+
+	if err := configureDNS(); err != nil {
+		return err
 	}
 
 	var mu sync.Mutex
@@ -221,6 +226,7 @@ func mountProc() (func() error, error) {
 		return nil
 	}, nil
 }
+
 func pivotRoot() error {
 	if err := os.Mkdir(".old", 0o700); err != nil {
 		return err
@@ -235,4 +241,11 @@ func pivotRoot() error {
 		return fmt.Errorf("unmounting .old failed: %w", err)
 	}
 	return os.Remove(".old")
+}
+
+func configureDNS() error {
+	if err := os.Mkdir("etc", 0o755); err != nil && !os.IsExist(err) {
+		return err
+	}
+	return ioutil.WriteFile("etc/resolv.conf", []byte("nameserver 8.8.8.8\nnameserver 8.8.4.4\n"), 0o644)
 }
