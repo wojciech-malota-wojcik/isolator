@@ -59,39 +59,20 @@ func (lt *logTransmitter) Flush() error {
 func Run(ctx context.Context) (retErr error) {
 	log := logger.Get(ctx)
 
-	// systemd remounts everything as MS_SHARED, to rpevent mess let's remount everything back to MS_PRIVATE inside namespace
-	if err := syscall.Mount("", "/", "", syscall.MS_SLAVE|syscall.MS_REC, ""); err != nil {
-		return fmt.Errorf("remounting / as slave failed: %w", err)
-	}
-
-	// PivotRoot can't be applied to directory where namespace was created, let's create subdirectory
-	if err := os.Mkdir("root", 0o755); err != nil && !os.IsExist(err) {
-		return err
-	}
-
-	// PivotRoot requires new root to be on different mountpoint, so let's bind it to itself
-	if err := syscall.Mount("root", "root", "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
-		return fmt.Errorf("binding new root to itself failed: %w", err)
-	}
-
-	// Let's assume that new filesystem is the current working dir even before pivoting to make life easier
-	if err := os.Chdir("root"); err != nil {
-		return err
+	if err := prepareNewRoot(); err != nil {
+		return fmt.Errorf("preparing new root filesystem failed: %w", err)
 	}
 
 	// Looks like PivotRoot drops CAP_SYS_ADMIN for some weird reason so mounting proc has to be done before that
-	if err := os.Mkdir("proc", 0o755); err != nil && !os.IsExist(err) {
+	unmountProc, err := mountProc()
+	if err != nil {
 		return err
 	}
-	if err := syscall.Mount("none", "proc", "proc", 0, ""); err != nil {
-		return fmt.Errorf("mounting proc failed: %w", err)
-	}
 	defer func() {
-		// no matter if we have already pivoted or not, proc is in current working dir and it's possible to unmount it
-		if err := syscall.Unmount("proc", 0); err != nil {
+		if err := unmountProc(); err != nil {
 			log.Error("Unmounting proc failed", zap.Error(err))
 			if retErr == nil {
-				retErr = fmt.Errorf("unmounting proc failed: %w", err)
+				retErr = err
 			}
 		}
 	}()
@@ -105,24 +86,15 @@ func Run(ctx context.Context) (retErr error) {
 		if l != nil {
 			if err := l.Close(); err != nil {
 				log.Error("Closing listening socket failed", zap.Error(err))
+				if retErr == nil {
+					retErr = err
+				}
 			}
 		}
 	}()
 
-	if err := os.Mkdir(".old", 0o700); err != nil {
-		return err
-	}
-	if err := syscall.PivotRoot(".", ".old"); err != nil {
-		return fmt.Errorf("pivoting / failed: %w", err)
-	}
-	if err := syscall.Mount("", ".old", "", syscall.MS_PRIVATE|syscall.MS_REC, ""); err != nil {
-		return fmt.Errorf("remounting .old as private failed: %w", err)
-	}
-	if err := syscall.Unmount(".old", syscall.MNT_DETACH); err != nil {
-		return fmt.Errorf("unmounting .old failed: %w", err)
-	}
-	if err := os.Remove(".old"); err != nil {
-		return err
+	if err := pivotRoot(); err != nil {
+		return fmt.Errorf("pivoting root filesystem failed: %w", err)
 	}
 
 	var mu sync.Mutex
@@ -211,4 +183,56 @@ func Run(ctx context.Context) (retErr error) {
 		})
 		return nil
 	})
+}
+
+func prepareNewRoot() error {
+	// systemd remounts everything as MS_SHARED, to rpevent mess let's remount everything back to MS_PRIVATE inside namespace
+	if err := syscall.Mount("", "/", "", syscall.MS_SLAVE|syscall.MS_REC, ""); err != nil {
+		return fmt.Errorf("remounting / as slave failed: %w", err)
+	}
+
+	// PivotRoot can't be applied to directory where namespace was created, let's create subdirectory
+	if err := os.Mkdir("root", 0o755); err != nil && !os.IsExist(err) {
+		return err
+	}
+
+	// PivotRoot requires new root to be on different mountpoint, so let's bind it to itself
+	if err := syscall.Mount("root", "root", "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
+		return fmt.Errorf("binding new root to itself failed: %w", err)
+	}
+
+	// Let's assume that new filesystem is the current working dir even before pivoting to make life easier
+	return os.Chdir("root")
+}
+
+func mountProc() (func() error, error) {
+	if err := os.Mkdir("proc", 0o755); err != nil && !os.IsExist(err) {
+		return nil, err
+	}
+	if err := syscall.Mount("none", "proc", "proc", 0, ""); err != nil {
+		return nil, fmt.Errorf("mounting proc failed: %w", err)
+	}
+
+	return func() error {
+		// no matter if we have already pivoted or not, proc is in current working dir and it's possible to unmount it
+		if err := syscall.Unmount("proc", 0); err != nil {
+			return fmt.Errorf("unmounting proc failed: %w", err)
+		}
+		return nil
+	}, nil
+}
+func pivotRoot() error {
+	if err := os.Mkdir(".old", 0o700); err != nil {
+		return err
+	}
+	if err := syscall.PivotRoot(".", ".old"); err != nil {
+		return fmt.Errorf("pivoting / failed: %w", err)
+	}
+	if err := syscall.Mount("", ".old", "", syscall.MS_PRIVATE|syscall.MS_REC, ""); err != nil {
+		return fmt.Errorf("remounting .old as private failed: %w", err)
+	}
+	if err := syscall.Unmount(".old", syscall.MNT_DETACH); err != nil {
+		return fmt.Errorf("unmounting .old failed: %w", err)
+	}
+	return os.Remove(".old")
 }
