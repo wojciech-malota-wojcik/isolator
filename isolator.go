@@ -7,15 +7,14 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/wojciech-malota-wojcik/isolator/client"
-	"github.com/wojciech-malota-wojcik/isolator/client/wire"
 	"github.com/wojciech-malota-wojcik/isolator/generated"
 )
 
@@ -24,8 +23,13 @@ const executorPath = ".executor"
 
 // Start dumps executor to file, starts it, connects to it and returns client
 func Start(ctx context.Context, dir string) (c *client.Client, cleanerFn func() error, retErr error) {
+	outPipe := newPipe()
+	inPipe := newPipe()
+
 	var terminateExecutor func() error
 	cleanerFnTmp := func() error {
+		outPipe.Close()
+		inPipe.Close()
 		if terminateExecutor != nil {
 			if err := terminateExecutor(); err != nil {
 				return fmt.Errorf("terminating executor failed: %w", err)
@@ -39,42 +43,22 @@ func Start(ctx context.Context, dir string) (c *client.Client, cleanerFn func() 
 		}
 	}()
 
-	var errCh <-chan error
-	terminateExecutor, errCh = startExecutor(dir)
-
-	var conn net.Conn
-	for i := 0; i < 100; i++ {
-		select {
-		case err := <-errCh:
-			return nil, nil, fmt.Errorf("executor exited before connection was made: %w", err)
-		default:
-		}
-
-		conn, retErr = net.Dial("unix", filepath.Join(dir, wire.SocketPath))
-		if retErr == nil {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			return nil, nil, ctx.Err()
-		case <-time.After(100 * time.Millisecond):
-		}
+	var err error
+	terminateExecutor, err = startExecutor(dir, outPipe, inPipe)
+	if err != nil {
+		return nil, nil, err
 	}
-	if retErr != nil {
-		return nil, nil, fmt.Errorf("connecting to executor failed: %w", retErr)
-	}
-	return client.New(conn), cleanerFnTmp, nil
+	return client.New(outPipe, inPipe), cleanerFnTmp, nil
 }
 
-func startExecutor(dir string) (func() error, <-chan error) {
+func startExecutor(dir string, outPipe io.Writer, inPipe io.Reader) (func() error, error) {
 	errCh := make(chan error, 1)
 
 	executorPath := filepath.Join(dir, executorPath)
 
 	if err := saveExecutor(executorPath); err != nil {
-		errCh <- fmt.Errorf("saving executor executable failed: %w", err)
-		close(errCh)
-		return nil, errCh
+		defer close(errCh)
+		return nil, fmt.Errorf("saving executor executable failed: %w", err)
 	}
 
 	cmd := exec.Command(executorPath)
@@ -100,9 +84,10 @@ func startExecutor(dir string) (func() error, <-chan error) {
 			},
 		},
 	}
-	cmd.Stdout = os.Stdout
+
+	cmd.Stdout = outPipe
+	cmd.Stdin = inPipe
 	cmd.Stderr = os.Stderr
-	cmd.Stdin = bytes.NewReader(nil)
 
 	started := make(chan struct{})
 	go func() {
@@ -120,11 +105,6 @@ func startExecutor(dir string) (func() error, <-chan error) {
 	return func() (retErr error) {
 		defer func() {
 			if err := os.Remove(executorPath); err != nil && !os.IsNotExist(err) {
-				if retErr == nil {
-					retErr = err
-				}
-			}
-			if err := os.Remove(filepath.Join(dir, wire.SocketPath)); err != nil && !os.IsNotExist(err) {
 				if retErr == nil {
 					retErr = err
 				}
@@ -155,7 +135,7 @@ func startExecutor(dir string) (func() error, <-chan error) {
 				}
 			}
 		}
-	}, errCh
+	}, nil
 }
 
 func saveExecutor(path string) error {
@@ -171,4 +151,58 @@ func saveExecutor(path string) error {
 	defer file.Close()
 	_, err = io.Copy(file, gzr)
 	return err
+}
+
+func newPipe() *pipe {
+	return &pipe{
+		ch: make(chan []byte),
+	}
+}
+
+type pipe struct {
+	mu     sync.RWMutex
+	closed bool
+	ch     chan []byte
+	buf    []byte
+}
+
+func (p *pipe) Read(data []byte) (int, error) {
+	if len(p.buf) == 0 {
+		var ok bool
+		p.buf, ok = <-p.ch
+		if !ok {
+			return 0, io.EOF
+		}
+	}
+	length := len(p.buf)
+	if length > len(data) {
+		length = len(data)
+	}
+	copy(data, p.buf[:length])
+	p.buf = p.buf[length:]
+	return length, nil
+}
+
+func (p *pipe) Write(data []byte) (int, error) {
+	p.mu.RLock()
+	defer p.mu.Unlock()
+
+	if p.closed {
+		return 0, io.ErrClosedPipe
+	}
+
+	p.ch <- data
+	return len(data), nil
+}
+
+func (p *pipe) Close() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.closed {
+		return
+	}
+
+	p.closed = true
+	close(p.ch)
 }
