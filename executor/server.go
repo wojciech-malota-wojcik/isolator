@@ -11,13 +11,14 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/ridge/parallel"
 	"github.com/wojciech-malota-wojcik/isolator/client"
 	"github.com/wojciech-malota-wojcik/isolator/client/wire"
 	"github.com/wojciech-malota-wojcik/libexec"
 )
 
 // Run runs isolator server
-func Run(ctx context.Context) (retErr error) {
+func Run(ctx context.Context) error {
 	if err := prepareNewRoot(); err != nil {
 		return fmt.Errorf("preparing new root filesystem failed: %w", err)
 	}
@@ -31,57 +32,75 @@ func Run(ctx context.Context) (retErr error) {
 		return err
 	}
 
-	if err := pivotRoot(); err != nil {
-		return fmt.Errorf("pivoting root filesystem failed: %w", err)
-	}
-
-	if err := configureDNS(); err != nil {
-		return err
-	}
-
 	c := client.New(os.Stdin, os.Stdout)
-	for {
-		msg, err := c.Receive()
-		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
+	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
+		spawn("watchdog", parallel.Fail, func(ctx context.Context) error {
+			<-ctx.Done()
+
+			// os.Stdin is used as input stream for client so it has to be closed to force client.Receive() to exit
+			_ = os.Stdin.Close()
+			return ctx.Err()
+		})
+		spawn("server", parallel.Exit, func(ctx context.Context) error {
+			msg, err := c.Receive()
+			if err != nil {
+				return fmt.Errorf("fetching configuration failed: %w", err)
 			}
-			if errors.Is(err, io.EOF) {
-				return nil
+			_, ok := msg.(wire.Config)
+			if !ok {
+				return fmt.Errorf("expected Config message but got: %T", msg)
 			}
-			return fmt.Errorf("receiving message failed: %w", err)
-		}
-		execute, ok := msg.(wire.Execute)
-		if !ok {
-			return errors.New("unexpected message received")
-		}
 
-		outTransmitter := &logTransmitter{
-			stream: wire.StreamOut,
-			client: c,
-		}
-		errTransmitter := &logTransmitter{
-			stream: wire.StreamErr,
-			client: c,
-		}
+			if err := pivotRoot(); err != nil {
+				return fmt.Errorf("pivoting root filesystem failed: %w", err)
+			}
 
-		cmd := exec.Command("/bin/sh", "-c", execute.Command)
-		cmd.Stdout = outTransmitter
-		cmd.Stderr = errTransmitter
-		var errStr string
-		if err := libexec.Exec(ctx, cmd); err != nil {
-			errStr = err.Error()
-		}
-		_ = outTransmitter.Flush()
-		_ = errTransmitter.Flush()
+			if err := configureDNS(); err != nil {
+				return err
+			}
 
-		if err := c.Send(wire.Completed{
-			ExitCode: cmd.ProcessState.ExitCode(),
-			Error:    errStr,
-		}); err != nil {
-			return fmt.Errorf("command status reporting failed: %w", err)
-		}
-	}
+			for {
+				msg, err := c.Receive()
+				if err != nil {
+					if ctx.Err() != nil || errors.Is(err, io.EOF) {
+						return ctx.Err()
+					}
+					return fmt.Errorf("receiving message failed: %w", err)
+				}
+				execute, ok := msg.(wire.Execute)
+				if !ok {
+					return fmt.Errorf("expected Execute message but got: %T", msg)
+				}
+
+				outTransmitter := &logTransmitter{
+					stream: wire.StreamOut,
+					client: c,
+				}
+				errTransmitter := &logTransmitter{
+					stream: wire.StreamErr,
+					client: c,
+				}
+
+				cmd := exec.Command("/bin/sh", "-c", execute.Command)
+				cmd.Stdout = outTransmitter
+				cmd.Stderr = errTransmitter
+				var errStr string
+				if err := libexec.Exec(ctx, cmd); err != nil {
+					errStr = err.Error()
+				}
+				_ = outTransmitter.Flush()
+				_ = errTransmitter.Flush()
+
+				if err := c.Send(wire.Completed{
+					ExitCode: cmd.ProcessState.ExitCode(),
+					Error:    errStr,
+				}); err != nil {
+					return fmt.Errorf("command status reporting failed: %w", err)
+				}
+			}
+		})
+		return nil
+	})
 }
 
 func prepareNewRoot() error {

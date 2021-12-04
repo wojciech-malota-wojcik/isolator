@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 
@@ -14,7 +13,7 @@ func main() {
 	// Isolator creates `root` directory under one passed to `isolator.Start`. The `root` directory is mounted as `/`.
 	// inside container.
 	// It is assumed that `root` contains `bin/sh` shell and all the required libraries. Without them it will fail.
-	isolator, terminateIsolator, err := isolator.Start(context.Background(), "/tmp/example")
+	client, terminateIsolator, err := isolator.Start(isolator.Config{Dir: "/tmp/example"})
 	if err != nil {
 		panic(err)
 	}
@@ -26,13 +25,13 @@ func main() {
 	}()
 
 	// Request to execute command in isolation
-	if err := isolator.Send(wire.Execute{Command: `echo "Hello world!"`}); err != nil {
+	if err := client.Send(wire.Execute{Command: `echo "Hello world!"`}); err != nil {
 		panic(err)
 	}
 
 	// Communication channel loop
 	for {
-		msg, err := isolator.Receive()
+		msg, err := client.Receive()
 		if err != nil {
 			panic(err)
 		}
