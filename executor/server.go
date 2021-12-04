@@ -149,7 +149,7 @@ func mountTmp() error {
 
 func populateDev() error {
 	devDir := "dev"
-	if err := os.MkdirAll(devDir, 0o755); err != nil && !os.IsExist(err) {
+	if err := os.Mkdir(devDir, 0o755); err != nil && !os.IsExist(err) {
 		return err
 	}
 	if err := syscall.Mount("none", devDir, "tmpfs", 0, ""); err != nil {
