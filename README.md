@@ -21,4 +21,5 @@ Take a look at [example/main.go](example/main.go)
 - `/proc` is mounted inside container and populated with in-container processes,
 - `/dev` is populated with basic devices: `null`, `zero`, `random`, `urandom` by binding them to those existing on host,
 - `tmpfs` is mounted on `/tmp`,
-- DNS inside container is set to `8.8.8.8` and `8.8.4.4` by populating `/etc/resolv.conf`.
+- DNS inside container is set to `8.8.8.8` and `8.8.4.4` by populating `/etc/resolv.conf`,
+- library supports mounting custom locations inside container (mounts may be writable or read-only).
