@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,7 +18,6 @@ import (
 )
 
 const capSysAdmin = 21
-const executorPath = ".executor"
 
 // Start dumps executor to file, starts it, connects to it and returns client
 func Start(config Config) (c *client.Client, cleanerFn func() error, retErr error) {
@@ -72,9 +72,8 @@ func sanitizeConfig(config Config) (Config, error) {
 func startExecutor(config Config, outPipe io.WriteCloser, inPipe io.ReadCloser) (func() error, error) {
 	errCh := make(chan error, 1)
 
-	executorPath := filepath.Join(config.Dir, executorPath)
-
-	if err := saveExecutor(executorPath); err != nil {
+	executorPath, err := saveExecutor()
+	if err != nil {
 		defer close(errCh)
 		return nil, fmt.Errorf("saving executor executable failed: %w", err)
 	}
@@ -161,19 +160,28 @@ func startExecutor(config Config, outPipe io.WriteCloser, inPipe io.ReadCloser) 
 	}, nil
 }
 
-func saveExecutor(path string) error {
-	gzr, err := gzip.NewReader(base64.NewDecoder(base64.RawStdEncoding, bytes.NewReader([]byte(generated.Executor))))
+func saveExecutor() (string, error) {
+	file, err := ioutil.TempFile("", "executor-*")
 	if err != nil {
-		return err
-	}
-	defer gzr.Close()
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o700)
-	if err != nil {
-		return err
+		return "", err
 	}
 	defer file.Close()
+
+	if err := os.Chmod(file.Name(), 0o700); err != nil {
+		return "", fmt.Errorf("making executor executable failed: %w", err)
+	}
+
+	gzr, err := gzip.NewReader(base64.NewDecoder(base64.RawStdEncoding, bytes.NewReader([]byte(generated.Executor))))
+	if err != nil {
+		return "", err
+	}
+	defer gzr.Close()
+
 	_, err = io.Copy(file, gzr)
-	return err
+	if err != nil {
+		return "", err
+	}
+	return file.Name(), nil
 }
 
 func newPipe() *pipe {
