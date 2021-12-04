@@ -3,7 +3,7 @@ package client
 import (
 	"encoding/json"
 	"fmt"
-	"net"
+	"io"
 	"reflect"
 
 	"github.com/ridge/must"
@@ -16,17 +16,15 @@ type message struct {
 }
 
 // New creates new client
-func New(conn net.Conn) *Client {
+func New(receiver io.Reader, sender io.Writer) *Client {
 	return &Client{
-		conn:    conn,
-		decoder: json.NewDecoder(conn),
-		encoder: json.NewEncoder(conn),
+		decoder: json.NewDecoder(receiver),
+		encoder: json.NewEncoder(sender),
 	}
 }
 
 // Client is the client for connection between executor and peer
 type Client struct {
-	conn    net.Conn
 	decoder *json.Decoder
 	encoder *json.Encoder
 }

@@ -1,8 +1,5 @@
 package wire
 
-// SocketPath is the path to unix socket file
-const SocketPath = ".executor.sock"
-
 // Execute is sent to execute a shell command
 type Execute struct {
 

@@ -6,14 +6,11 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sync"
 	"syscall"
 
-	"github.com/ridge/parallel"
 	"github.com/wojciech-malota-wojcik/isolator/client"
 	"github.com/wojciech-malota-wojcik/isolator/client/wire"
 	"github.com/wojciech-malota-wojcik/libexec"
@@ -34,17 +31,6 @@ func Run(ctx context.Context) (retErr error) {
 		return err
 	}
 
-	// starting unix socket before pivoting so we may create it in upper directory
-	l, err := net.Listen("unix", filepath.Join("..", wire.SocketPath))
-	if err != nil {
-		return fmt.Errorf("failed to start listening: %w", err)
-	}
-	defer func() {
-		if l != nil {
-			_ = l.Close()
-		}
-	}()
-
 	if err := pivotRoot(); err != nil {
 		return fmt.Errorf("pivoting root filesystem failed: %w", err)
 	}
@@ -53,88 +39,49 @@ func Run(ctx context.Context) (retErr error) {
 		return err
 	}
 
-	var mu sync.Mutex
-	var conn net.Conn
-	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
-		spawn("connection", parallel.Exit, func(ctx context.Context) error {
-			var err error
-			connTmp, err := l.Accept()
-			if err != nil {
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				return fmt.Errorf("accepting connection failed: %w", err)
-			}
-
-			mu.Lock()
+	c := client.New(os.Stdin, os.Stdout)
+	for {
+		msg, err := c.Receive()
+		if err != nil {
 			if ctx.Err() != nil {
-				_ = connTmp.Close()
-				mu.Unlock()
 				return ctx.Err()
 			}
-			conn = connTmp
-			mu.Unlock()
-
-			c := client.New(conn)
-			for {
-				msg, err := c.Receive()
-				if err != nil {
-					if ctx.Err() != nil {
-						return ctx.Err()
-					}
-					if errors.Is(err, io.EOF) {
-						return nil
-					}
-					return fmt.Errorf("receiving message failed: %w", err)
-				}
-				execute, ok := msg.(wire.Execute)
-				if !ok {
-					return errors.New("unexpected message received")
-				}
-
-				outTransmitter := &logTransmitter{
-					stream: wire.StreamOut,
-					client: c,
-				}
-				errTransmitter := &logTransmitter{
-					stream: wire.StreamErr,
-					client: c,
-				}
-
-				cmd := exec.Command("/bin/sh", "-c", execute.Command)
-				cmd.Stdout = outTransmitter
-				cmd.Stderr = errTransmitter
-				var errStr string
-				if err := libexec.Exec(ctx, cmd); err != nil {
-					errStr = err.Error()
-				}
-				_ = outTransmitter.Flush()
-				_ = errTransmitter.Flush()
-
-				if err := c.Send(wire.Completed{
-					ExitCode: cmd.ProcessState.ExitCode(),
-					Error:    errStr,
-				}); err != nil {
-					return fmt.Errorf("command status reporting failed: %w", err)
-				}
+			if errors.Is(err, io.EOF) {
+				return nil
 			}
-		})
-		spawn("watchdog", parallel.Exit, func(ctx context.Context) error {
-			<-ctx.Done()
-			mu.Lock()
-			defer mu.Unlock()
+			return fmt.Errorf("receiving message failed: %w", err)
+		}
+		execute, ok := msg.(wire.Execute)
+		if !ok {
+			return errors.New("unexpected message received")
+		}
 
-			if conn != nil {
-				_ = conn.Close()
-			}
-			if l != nil {
-				_ = l.Close()
-				l = nil
-			}
-			return nil
-		})
-		return nil
-	})
+		outTransmitter := &logTransmitter{
+			stream: wire.StreamOut,
+			client: c,
+		}
+		errTransmitter := &logTransmitter{
+			stream: wire.StreamErr,
+			client: c,
+		}
+
+		cmd := exec.Command("/bin/sh", "-c", execute.Command)
+		cmd.Stdout = outTransmitter
+		cmd.Stderr = errTransmitter
+		var errStr string
+		if err := libexec.Exec(ctx, cmd); err != nil {
+			errStr = err.Error()
+		}
+		_ = outTransmitter.Flush()
+		_ = errTransmitter.Flush()
+
+		if err := c.Send(wire.Completed{
+			ExitCode: cmd.ProcessState.ExitCode(),
+			Error:    errStr,
+		}); err != nil {
+			return fmt.Errorf("command status reporting failed: %w", err)
+		}
+	}
 }
 
 func prepareNewRoot() error {
