@@ -21,6 +21,11 @@ const executorPath = ".executor"
 
 // Start dumps executor to file, starts it, connects to it and returns client
 func Start(config Config) (c *client.Client, cleanerFn func() error, retErr error) {
+	config, err := sanitizeConfig(config)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	outPipe := newPipe()
 	inPipe := newPipe()
 
@@ -41,7 +46,6 @@ func Start(config Config) (c *client.Client, cleanerFn func() error, retErr erro
 		}
 	}()
 
-	var err error
 	terminateExecutor, err = startExecutor(config, outPipe, inPipe)
 	if err != nil {
 		return nil, nil, err
@@ -52,6 +56,17 @@ func Start(config Config) (c *client.Client, cleanerFn func() error, retErr erro
 		return nil, nil, fmt.Errorf("sending config to executor failed: %w", err)
 	}
 	return c, cleanerFnTmp, nil
+}
+
+func sanitizeConfig(config Config) (Config, error) {
+	for i, m := range config.Executor.Mounts {
+		var err error
+		config.Executor.Mounts[i].Host, err = filepath.Abs(m.Host)
+		if err != nil {
+			return Config{}, err
+		}
+	}
+	return config, nil
 }
 
 func startExecutor(config Config, outPipe io.WriteCloser, inPipe io.ReadCloser) (func() error, error) {

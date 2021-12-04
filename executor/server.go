@@ -46,9 +46,13 @@ func Run(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("fetching configuration failed: %w", err)
 			}
-			_, ok := msg.(wire.Config)
+			config, ok := msg.(wire.Config)
 			if !ok {
 				return fmt.Errorf("expected Config message but got: %T", msg)
+			}
+
+			if err := applyMounts(config.Mounts); err != nil {
+				return fmt.Errorf("mounting host directories failed: %w", err)
 			}
 
 			if err := pivotRoot(); err != nil {
@@ -162,6 +166,28 @@ func populateDev() error {
 		}
 		if err := syscall.Mount(filepath.Join("/", devPath), devPath, "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
 			return fmt.Errorf("binding dev/%s device failed: %w", dev, err)
+		}
+	}
+	return nil
+}
+
+func applyMounts(mounts []wire.Mount) error {
+	// To mount readonly, trick is required:
+	// 1. mount dir normally
+	// 2. remount it using read-only option
+	for _, m := range mounts {
+		// force path in container should be relative to the new filesystem to prevent hacks (we haven't pivoted yet)
+		m.Container = filepath.Join(".", m.Container)
+		if err := os.Mkdir(m.Container, 0o700); err != nil {
+			return err
+		}
+		if err := syscall.Mount(m.Host, m.Container, "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
+			return fmt.Errorf("mounting %s to %s failed: %w", m.Host, m.Container, err)
+		}
+		if !m.Writable {
+			if err := syscall.Mount(m.Host, m.Container, "", syscall.MS_BIND|syscall.MS_PRIVATE|syscall.MS_REMOUNT|syscall.MS_RDONLY, ""); err != nil {
+				return fmt.Errorf("remounting readonly %s to %s failed: %w", m.Host, m.Container, err)
+			}
 		}
 	}
 	return nil

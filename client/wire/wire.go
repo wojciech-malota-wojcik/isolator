@@ -1,7 +1,21 @@
 package wire
 
+// Mount defines directories to mount inside container
+type Mount struct {
+	// Location on Host
+	Host string
+
+	// Mountpoint inside container
+	Container string
+
+	// Writable makes mount writable inside container
+	Writable bool
+}
+
 // Config stores configuration of executor
 type Config struct {
+	// Mounts is the list of bindings to apply inside container
+	Mounts []Mount
 }
 
 // Execute is sent to execute a shell command

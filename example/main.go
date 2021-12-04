@@ -9,11 +9,25 @@ import (
 )
 
 func main() {
+	config := isolator.Config{
+		// Directory where container is created, filesystem of container should exist inside "root" directory there
+		Dir: "/tmp/example",
+		Executor: wire.Config{
+			Mounts: []wire.Mount{
+				// Let's make host's /tmp available inside container under /test
+				{
+					Host:      "/tmp",
+					Container: "/test",
+				},
+			},
+		},
+	}
+
 	// Starting isolator. If passed ctx is canceled, isolator.Start breaks and returns error.
 	// Isolator creates `root` directory under one passed to `isolator.Start`. The `root` directory is mounted as `/`.
 	// inside container.
 	// It is assumed that `root` contains `bin/sh` shell and all the required libraries. Without them it will fail.
-	client, terminateIsolator, err := isolator.Start(isolator.Config{Dir: "/tmp/example"})
+	client, terminateIsolator, err := isolator.Start(config)
 	if err != nil {
 		panic(err)
 	}
