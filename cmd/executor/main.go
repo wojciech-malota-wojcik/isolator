@@ -6,5 +6,5 @@ import (
 )
 
 func main() {
-	run.Service("executor", nil, executor.Run)
+	run.Tool("executor", nil, executor.Run)
 }

@@ -16,7 +16,7 @@ type message struct {
 }
 
 // New creates new client
-func New(receiver io.Reader, sender io.Writer) *Client {
+func New(receiver io.ReadCloser, sender io.WriteCloser) *Client {
 	return &Client{
 		decoder: json.NewDecoder(receiver),
 		encoder: json.NewEncoder(sender),
@@ -56,6 +56,8 @@ func (c *Client) Receive() (interface{}, error) {
 func typeToInstance(tName string) (interface{}, error) {
 	var msg interface{}
 	switch tName {
+	case "Config":
+		msg = &wire.Config{}
 	case "Execute":
 		msg = &wire.Execute{}
 	case "Completed":

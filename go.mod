@@ -6,6 +6,7 @@ replace github.com/ridge/parallel => github.com/wojciech-malota-wojcik/parallel 
 
 require (
 	github.com/ridge/must v0.6.0
+	github.com/ridge/parallel v0.1.1
 	github.com/wojciech-malota-wojcik/build v1.3.0
 	github.com/wojciech-malota-wojcik/buildgo v0.1.1
 	github.com/wojciech-malota-wojcik/ioc/v2 v2.4.0

@@ -1,5 +1,9 @@
 package wire
 
+// Config stores configuration of executor
+type Config struct {
+}
+
 // Execute is sent to execute a shell command
 type Execute struct {
 
