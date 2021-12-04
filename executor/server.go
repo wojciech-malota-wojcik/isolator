@@ -97,7 +97,6 @@ func Run(ctx context.Context) error {
 				}); err != nil {
 					return fmt.Errorf("command status reporting failed: %w", err)
 				}
-
 			}
 		})
 		return nil
@@ -224,7 +223,4 @@ func (lt *logTransmitter) Flush() error {
 	}
 	lt.buf = make([]byte, 0, len(lt.buf))
 	return nil
-}
-
-type closable struct {
 }
