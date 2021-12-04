@@ -149,7 +149,7 @@ func mountTmp() error {
 
 func populateDev() error {
 	devDir := "dev"
-	if err := os.MkdirAll(devDir, 0o755); err != nil && !os.IsExist(err) {
+	if err := os.Mkdir(devDir, 0o755); err != nil && !os.IsExist(err) {
 		return err
 	}
 	if err := syscall.Mount("none", devDir, "tmpfs", 0, ""); err != nil {
@@ -178,7 +178,7 @@ func applyMounts(mounts []wire.Mount) error {
 	for _, m := range mounts {
 		// force path in container should be relative to the new filesystem to prevent hacks (we haven't pivoted yet)
 		m.Container = filepath.Join(".", m.Container)
-		if err := os.Mkdir(m.Container, 0o700); err != nil {
+		if err := os.MkdirAll(m.Container, 0o700); err != nil && !os.IsExist(err) {
 			return err
 		}
 		if err := syscall.Mount(m.Host, m.Container, "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
