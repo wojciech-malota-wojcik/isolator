@@ -14,22 +14,30 @@ type Mount struct {
 
 // Config stores configuration of executor
 type Config struct {
+	// Chroot tells if chroot should be used instead of pivoting
+	Chroot bool
+
 	// Mounts is the list of bindings to apply inside container
 	Mounts []Mount
 }
 
 // Execute is sent to execute a shell command
 type Execute struct {
-
 	// Command is a command to execute
 	Command string
 }
 
-// Completed is sent once command finishes
-type Completed struct {
-	// ExitCode is the exit code of command
-	ExitCode int
+// Copy copies rsc to dst
+type Copy struct {
+	// Src points to source location
+	Src string
 
+	// Dst points to destination location
+	Dst string
+}
+
+// Result is sent once command finishes
+type Result struct {
 	// Error is the error returned by command
 	Error string
 }

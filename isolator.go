@@ -42,7 +42,9 @@ func Start(config Config) (c *client.Client, cleanerFn func() error, retErr erro
 	}
 	defer func() {
 		if retErr != nil {
-			_ = cleanerFnTmp()
+			if err := cleanerFnTmp(); err != nil {
+				retErr = err
+			}
 		}
 	}()
 
@@ -84,20 +86,20 @@ func startExecutor(config Config, outPipe io.WriteCloser, inPipe io.ReadCloser) 
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWUSER | syscall.CLONE_NEWIPC | syscall.CLONE_NEWUTS,
 		// by adding CAP_SYS_ADMIN executor may mount /proc
-		// by adding CAP_MKNOD executor may populate /dev
 		AmbientCaps: []uintptr{capSysAdmin},
+		// some files are owned by groups like tty etc. so mapping a single user is not enough
 		UidMappings: []syscall.SysProcIDMap{
 			{
 				HostID:      os.Getuid(),
 				ContainerID: 0,
-				Size:        1,
+				Size:        10000,
 			},
 		},
 		GidMappings: []syscall.SysProcIDMap{
 			{
 				HostID:      os.Getgid(),
 				ContainerID: 0,
-				Size:        1,
+				Size:        10000,
 			},
 		},
 	}
