@@ -60,8 +60,10 @@ func typeToInstance(tName string) (interface{}, error) {
 		msg = &wire.Config{}
 	case "Execute":
 		msg = &wire.Execute{}
-	case "Completed":
-		msg = &wire.Completed{}
+	case "Copy":
+		msg = &wire.Copy{}
+	case "Result":
+		msg = &wire.Result{}
 	case "Log":
 		msg = &wire.Log{}
 	default:

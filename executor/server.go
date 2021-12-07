@@ -11,32 +11,20 @@ import (
 	"path/filepath"
 	"syscall"
 
+	cp "github.com/otiai10/copy"
 	"github.com/ridge/parallel"
 	"github.com/wojciech-malota-wojcik/isolator/client"
 	"github.com/wojciech-malota-wojcik/isolator/client/wire"
+	"github.com/wojciech-malota-wojcik/isolator/lib/chroot"
 	"github.com/wojciech-malota-wojcik/libexec"
 )
 
 // Run runs isolator server
 func Run(ctx context.Context) error {
-	if err := prepareNewRoot(); err != nil {
-		return fmt.Errorf("preparing new root filesystem failed: %w", err)
-	}
-	if err := mountProc(); err != nil {
-		return err
-	}
-	if err := mountTmp(); err != nil {
-		return err
-	}
-	if err := populateDev(); err != nil {
-		return err
-	}
-
 	c := client.New(os.Stdin, os.Stdout)
 	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
 		spawn("watchdog", parallel.Fail, func(ctx context.Context) error {
 			<-ctx.Done()
-
 			// os.Stdin is used as input stream for client so it has to be closed to force client.Receive() to exit
 			_ = os.Stdin.Close()
 			return ctx.Err()
@@ -51,16 +39,38 @@ func Run(ctx context.Context) error {
 				return fmt.Errorf("expected Config message but got: %T", msg)
 			}
 
-			if err := applyMounts(config.Mounts); err != nil {
-				return fmt.Errorf("mounting host directories failed: %w", err)
-			}
+			if config.Chroot {
+				exitChroot, err := chroot.Enter(".")
+				if err != nil {
+					return err
+				}
+				defer func() {
+					_ = exitChroot()
+				}()
+			} else {
+				if err := prepareNewRoot(); err != nil {
+					return fmt.Errorf("preparing new root filesystem failed: %w", err)
+				}
+				if err := mountProc(); err != nil {
+					return err
+				}
+				if err := mountTmp(); err != nil {
+					return err
+				}
+				if err := populateDev(); err != nil {
+					return err
+				}
+				if err := applyMounts(config.Mounts); err != nil {
+					return fmt.Errorf("mounting host directories failed: %w", err)
+				}
 
-			if err := pivotRoot(); err != nil {
-				return fmt.Errorf("pivoting root filesystem failed: %w", err)
-			}
+				if err := pivotRoot(); err != nil {
+					return fmt.Errorf("pivoting root filesystem failed: %w", err)
+				}
 
-			if err := configureDNS(); err != nil {
-				return err
+				if err := configureDNS(); err != nil {
+					return err
+				}
 			}
 
 			for {
@@ -71,33 +81,22 @@ func Run(ctx context.Context) error {
 					}
 					return fmt.Errorf("receiving message failed: %w", err)
 				}
-				execute, ok := msg.(wire.Execute)
-				if !ok {
-					return fmt.Errorf("expected Execute message but got: %T", msg)
+
+				switch m := msg.(type) {
+				case wire.Execute:
+					err = execute(ctx, c, m)
+				case wire.Copy:
+					err = cp.Copy(m.Src, m.Dst, cp.Options{PreserveTimes: true, PreserveOwner: true})
+				default:
+					return fmt.Errorf("unexpected message: %T", m)
 				}
 
-				outTransmitter := &logTransmitter{
-					stream: wire.StreamOut,
-					client: c,
-				}
-				errTransmitter := &logTransmitter{
-					stream: wire.StreamErr,
-					client: c,
-				}
-
-				cmd := exec.Command("/bin/sh", "-c", execute.Command)
-				cmd.Stdout = outTransmitter
-				cmd.Stderr = errTransmitter
 				var errStr string
-				if err := libexec.Exec(ctx, cmd); err != nil {
+				if err != nil {
 					errStr = err.Error()
 				}
-				_ = outTransmitter.Flush()
-				_ = errTransmitter.Flush()
-
-				if err := c.Send(wire.Completed{
-					ExitCode: cmd.ProcessState.ExitCode(),
-					Error:    errStr,
+				if err := c.Send(wire.Result{
+					Error: errStr,
 				}); err != nil {
 					return fmt.Errorf("command status reporting failed: %w", err)
 				}
@@ -105,6 +104,28 @@ func Run(ctx context.Context) error {
 		})
 		return nil
 	})
+}
+
+func execute(ctx context.Context, c *client.Client, msg wire.Execute) error {
+	outTransmitter := &logTransmitter{
+		stream: wire.StreamOut,
+		client: c,
+	}
+	errTransmitter := &logTransmitter{
+		stream: wire.StreamErr,
+		client: c,
+	}
+
+	cmd := exec.Command("/bin/sh", "-c", msg.Command)
+	cmd.Stdout = outTransmitter
+	cmd.Stderr = errTransmitter
+
+	err := libexec.Exec(ctx, cmd)
+
+	_ = outTransmitter.Flush()
+	_ = errTransmitter.Flush()
+
+	return err
 }
 
 func prepareNewRoot() error {

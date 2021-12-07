@@ -59,10 +59,10 @@ func main() {
 			if _, err := stream.Write([]byte(m.Text)); err != nil {
 				panic(err)
 			}
-		// wire.Completed means command finished
-		case wire.Completed:
-			if m.ExitCode != 0 || m.Error != "" {
-				panic(fmt.Errorf("command failed: %s, exit code: %d", m.Error, m.ExitCode))
+		// wire.Result means command finished
+		case wire.Result:
+			if m.Error != "" {
+				panic(fmt.Errorf("command failed: %s", m.Error))
 			}
 			return
 		default:
