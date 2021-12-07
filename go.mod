@@ -5,7 +5,7 @@ go 1.16
 replace github.com/ridge/parallel => github.com/wojciech-malota-wojcik/parallel v0.1.2
 
 require (
-	github.com/otiai10/copy v1.7.0 // indirect
+	github.com/otiai10/copy v1.7.0
 	github.com/ridge/must v0.6.0
 	github.com/ridge/parallel v0.1.1
 	github.com/wojciech-malota-wojcik/build v1.3.0
