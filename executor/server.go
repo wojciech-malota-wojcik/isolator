@@ -16,6 +16,8 @@ import (
 	"github.com/wojciech-malota-wojcik/isolator/client"
 	"github.com/wojciech-malota-wojcik/isolator/client/wire"
 	"github.com/wojciech-malota-wojcik/isolator/lib/chroot"
+	"github.com/wojciech-malota-wojcik/isolator/lib/docker"
+	"github.com/wojciech-malota-wojcik/isolator/lib/libhttp"
 	"github.com/wojciech-malota-wojcik/libexec"
 )
 
@@ -38,6 +40,9 @@ func Run(ctx context.Context) error {
 			if !ok {
 				return fmt.Errorf("expected Config message but got: %T", msg)
 			}
+
+			// creating http client before pivoting/chrooting because client reads CA certificates from system pool
+			httpClient := libhttp.NewSelfClient()
 
 			if config.Chroot {
 				exitChroot, err := chroot.Enter(".")
@@ -87,6 +92,8 @@ func Run(ctx context.Context) error {
 					err = execute(ctx, c, m)
 				case wire.Copy:
 					err = cp.Copy(m.Src, m.Dst, cp.Options{PreserveTimes: true, PreserveOwner: true})
+				case wire.InitFromDocker:
+					err = docker.Apply(ctx, httpClient, m.Image, m.Tag)
 				default:
 					return fmt.Errorf("unexpected message: %T", m)
 				}
