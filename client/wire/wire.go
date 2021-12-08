@@ -36,6 +36,15 @@ type Copy struct {
 	Dst string
 }
 
+// InitFromDocker initializes filesystem by downloading and integrating docker image
+type InitFromDocker struct {
+	// Image is the name of the image
+	Image string
+
+	// Tag is the tag of the image
+	Tag string
+}
+
 // Result is sent once command finishes
 type Result struct {
 	// Error is the error returned by command

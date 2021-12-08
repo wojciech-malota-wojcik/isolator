@@ -62,6 +62,8 @@ func typeToInstance(tName string) (interface{}, error) {
 		msg = &wire.Execute{}
 	case "Copy":
 		msg = &wire.Copy{}
+	case "InitFromDocker":
+		msg = &wire.InitFromDocker{}
 	case "Result":
 		msg = &wire.Result{}
 	case "Log":
