@@ -155,6 +155,9 @@ loop:
 		if err := os.RemoveAll(header.Name); err != nil && !os.IsNotExist(err) {
 			return err
 		}
+		// We take mode from header.FileInfo().Mode(), not from header.Mode because they may be in different formats (meaning of bits may be different).
+		// header.FileInfo().Mode() returns compatible value.
+		mode := header.FileInfo().Mode()
 
 		switch {
 		case filepath.Base(header.Name) == ".wh..wh..plnk":
@@ -195,11 +198,11 @@ loop:
 			delete(added, header.Name)
 			continue
 		case header.Typeflag == tar.TypeDir:
-			if err := os.MkdirAll(header.Name, os.FileMode(header.Mode)); err != nil {
+			if err := os.MkdirAll(header.Name, mode); err != nil {
 				return err
 			}
 		case header.Typeflag == tar.TypeReg:
-			f, err := os.OpenFile(header.Name, os.O_CREATE|os.O_WRONLY, os.FileMode(header.Mode))
+			f, err := os.OpenFile(header.Name, os.O_CREATE|os.O_WRONLY, mode)
 			if err != nil {
 				return err
 			}
@@ -214,7 +217,7 @@ loop:
 			}
 		case header.Typeflag == tar.TypeLink:
 			// linked file may not exist yet, so let's create it - i will be overwritten later
-			f, err := os.OpenFile(header.Linkname, os.O_CREATE|os.O_EXCL, os.FileMode(header.Mode))
+			f, err := os.OpenFile(header.Linkname, os.O_CREATE|os.O_EXCL, mode)
 			if err != nil {
 				if !os.IsExist(err) {
 					return err
@@ -232,6 +235,16 @@ loop:
 		added[header.Name] = true
 		if err := os.Lchown(header.Name, header.Uid, header.Gid); err != nil {
 			return err
+		}
+
+		// Unless CAP_FSETID capability is set for the process every operation modifying the file/dir will reset
+		// setuid, setgid nd sticky bits. After saving those files/dirs the mode has to be set once again to set those bits.
+		// This has to be the last operation on the file/dir.
+		// On linux mode is not supported for symlinks, mode is always taken from target location.
+		if header.Typeflag != tar.TypeSymlink {
+			if err := os.Chmod(header.Name, mode); err != nil {
+				return err
+			}
 		}
 	}
 
