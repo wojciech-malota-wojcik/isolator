@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wojciech-malota-wojcik/isolator/client"
-	"github.com/wojciech-malota-wojcik/isolator/generated"
+	"github.com/outofforest/isolator/client"
+	"github.com/outofforest/isolator/generated"
 )
 
 const capSysAdmin = 21

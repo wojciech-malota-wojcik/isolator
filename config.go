@@ -1,6 +1,6 @@
 package isolator
 
-import "github.com/wojciech-malota-wojcik/isolator/client/wire"
+import "github.com/outofforest/isolator/client/wire"
 
 // Config stores configuration of isolator
 type Config struct {

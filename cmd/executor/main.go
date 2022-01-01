@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/wojciech-malota-wojcik/isolator/executor"
-	"github.com/wojciech-malota-wojcik/run"
+	"github.com/outofforest/isolator/executor"
+	"github.com/outofforest/run"
 )
 
 func main() {

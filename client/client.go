@@ -6,8 +6,8 @@ import (
 	"io"
 	"reflect"
 
+	"github.com/outofforest/isolator/client/wire"
 	"github.com/ridge/must"
-	"github.com/wojciech-malota-wojcik/isolator/client/wire"
 )
 
 type message struct {

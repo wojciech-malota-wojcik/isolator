@@ -16,9 +16,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/outofforest/isolator/lib/retry"
+	"github.com/outofforest/logger"
 	"github.com/ridge/must"
-	"github.com/wojciech-malota-wojcik/isolator/lib/retry"
-	"github.com/wojciech-malota-wojcik/logger"
 	"go.uber.org/zap"
 )
 
