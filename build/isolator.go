@@ -7,8 +7,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/wojciech-malota-wojcik/build"
-	"github.com/wojciech-malota-wojcik/buildgo"
+	"github.com/outofforest/build"
+	"github.com/outofforest/buildgo"
 )
 
 func buildExecutor(ctx context.Context) error {

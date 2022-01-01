@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/wojciech-malota-wojcik/isolator"
-	"github.com/wojciech-malota-wojcik/isolator/client/wire"
+	"github.com/outofforest/isolator"
+	"github.com/outofforest/isolator/client/wire"
 )
 
 func main() {
