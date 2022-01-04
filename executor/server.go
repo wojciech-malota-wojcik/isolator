@@ -196,6 +196,17 @@ func populateDev() error {
 			return fmt.Errorf("binding dev/%s device failed: %w", dev, err)
 		}
 	}
+	links := map[string]string{
+		"fd":     "/proc/self/fd",
+		"stdin":  "fd/0",
+		"stdout": "fd/1",
+		"stderr": "fd/2",
+	}
+	for newName, oldName := range links {
+		if err := os.Symlink(oldName, devDir+"/"+newName); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
