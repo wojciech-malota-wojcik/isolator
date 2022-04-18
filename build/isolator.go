@@ -11,7 +11,8 @@ import (
 	"github.com/outofforest/buildgo"
 )
 
-func buildExecutor(ctx context.Context) error {
+func buildExecutor(ctx context.Context, deps build.DepsFunc) error {
+	deps(buildgo.EnsureGo)
 	return buildgo.GoBuildPkg(ctx, "cmd/executor", "bin/executor", false)
 }
 
