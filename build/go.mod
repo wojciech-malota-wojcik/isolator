@@ -8,6 +8,5 @@ require (
 	github.com/outofforest/build v1.7.11
 	github.com/outofforest/buildgo v0.3.6
 	github.com/outofforest/ioc/v2 v2.5.0
-	github.com/outofforest/isolator v0.4.5
 	github.com/outofforest/run v0.2.2
 )
