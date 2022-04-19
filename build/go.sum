@@ -19,8 +19,6 @@ github.com/outofforest/buildgo v0.3.6 h1:H9I5ajMehVIrinFF3JN/lxazch3kum+p/QNFUM1
 github.com/outofforest/buildgo v0.3.6/go.mod h1:ZA5WolPDnTQnesYCCCUmBeMdkQlbnrSaMZGas70PrKM=
 github.com/outofforest/ioc/v2 v2.5.0 h1:adaOwJrk8IzlauIfe41SG7PNHK23dBQhrpAR5ho7m3E=
 github.com/outofforest/ioc/v2 v2.5.0/go.mod h1:7dAov+lZ7RbJ2TCy/IiK6+bicPmWZspga0P+exKudNE=
-github.com/outofforest/isolator v0.4.5 h1:Ve58w92oSX38XFWTuezbItPoAqBtp4XFJMkhfqndwFA=
-github.com/outofforest/isolator v0.4.5/go.mod h1:BqrDuIXRtk4gDBJ0qNn7t3nul8lXTRrbE+BxTIAsOdg=
 github.com/outofforest/libexec v0.2.1 h1:x1Cfk88do1teCrgNxOotjWBpLGMtvmInNsvsJpP/P44=
 github.com/outofforest/libexec v0.2.1/go.mod h1:G3vH3SymR+QiJLfT3L4EnTqtrilFEukqnTE0JDbO/5Q=
 github.com/outofforest/logger v0.2.0 h1:mBUGPTu/nZjw81Qi/xspF0mdxzMEYl7ytANgNNixXgA=
