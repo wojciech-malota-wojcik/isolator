@@ -12,13 +12,14 @@ import (
 	"syscall"
 
 	cp "github.com/otiai10/copy"
+	"github.com/outofforest/libexec"
+	"github.com/outofforest/parallel"
+
 	"github.com/outofforest/isolator/client"
 	"github.com/outofforest/isolator/client/wire"
 	"github.com/outofforest/isolator/lib/chroot"
 	"github.com/outofforest/isolator/lib/docker"
 	"github.com/outofforest/isolator/lib/libhttp"
-	"github.com/outofforest/libexec"
-	"github.com/ridge/parallel"
 )
 
 // Run runs isolator server
