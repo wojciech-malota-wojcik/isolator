@@ -4,7 +4,7 @@ go 1.18
 
 require (
 	github.com/otiai10/copy v1.7.0
-	github.com/outofforest/libexec v0.2.2
+	github.com/outofforest/libexec v0.3.0
 	github.com/outofforest/logger v0.2.0
 	github.com/outofforest/parallel v0.2.0
 	github.com/outofforest/run v0.2.3

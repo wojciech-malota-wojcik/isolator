@@ -17,6 +17,8 @@ github.com/outofforest/ioc/v2 v2.5.0 h1:adaOwJrk8IzlauIfe41SG7PNHK23dBQhrpAR5ho7
 github.com/outofforest/ioc/v2 v2.5.0/go.mod h1:7dAov+lZ7RbJ2TCy/IiK6+bicPmWZspga0P+exKudNE=
 github.com/outofforest/libexec v0.2.2 h1:ifKXqlDFrRbL+3kYgFjkpT8S4EcfWhffNPkIcnuZAbA=
 github.com/outofforest/libexec v0.2.2/go.mod h1:qYv/qAFlxw6yq3oEUbbYUbBLSjHsm/X9CvWdSqHNm9E=
+github.com/outofforest/libexec v0.3.0 h1:SImOgSKtq1q1bQgxoDWaiWyE2+omPo2/lQj8YG5ZyjY=
+github.com/outofforest/libexec v0.3.0/go.mod h1:qYv/qAFlxw6yq3oEUbbYUbBLSjHsm/X9CvWdSqHNm9E=
 github.com/outofforest/logger v0.2.0 h1:mBUGPTu/nZjw81Qi/xspF0mdxzMEYl7ytANgNNixXgA=
 github.com/outofforest/logger v0.2.0/go.mod h1:01cg+cIodmNhDh3tHk/eGKTAxbQIwcGM3Apo46ebWAs=
 github.com/outofforest/parallel v0.2.0 h1:K9dAeOPodnuJvHPmd5OL7eiQ9dd7xXRpuN0PF79tDYM=
