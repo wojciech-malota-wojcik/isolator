@@ -84,22 +84,23 @@ func startExecutor(config Config, outPipe io.WriteCloser, inPipe io.ReadCloser) 
 	cmd.Dir = config.Dir
 	cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Pdeathsig:  syscall.SIGKILL,
 		Cloneflags: syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWUSER | syscall.CLONE_NEWIPC | syscall.CLONE_NEWUTS,
 		// by adding CAP_SYS_ADMIN executor may mount /proc
 		AmbientCaps: []uintptr{capSysAdmin},
-		// some files are owned by groups like tty etc. so mapping a single user is not enough
 		UidMappings: []syscall.SysProcIDMap{
 			{
-				HostID:      os.Getuid(),
+				HostID:      0,
 				ContainerID: 0,
-				Size:        10000,
+				Size:        65535,
 			},
 		},
+		GidMappingsEnableSetgroups: true,
 		GidMappings: []syscall.SysProcIDMap{
 			{
-				HostID:      os.Getgid(),
+				HostID:      0,
 				ContainerID: 0,
-				Size:        10000,
+				Size:        65535,
 			},
 		},
 	}
