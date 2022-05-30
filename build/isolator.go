@@ -9,6 +9,7 @@ import (
 
 	"github.com/outofforest/build"
 	"github.com/outofforest/buildgo"
+	"github.com/pkg/errors"
 )
 
 func buildExecutor(ctx context.Context, deps build.DepsFunc) error {
@@ -24,21 +25,21 @@ func packExecutor() (retErr error) {
 	}()
 
 	if err := os.RemoveAll("generated"); err != nil && !os.IsNotExist(err) {
-		return err
+		return errors.WithStack(err)
 	}
 	if err := os.Mkdir("generated", 0o755); err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 
 	ef, err := os.Open("bin/executor")
 	if err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	defer ef.Close()
 
 	of, err := os.OpenFile("generated/executor.go", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 	if err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	defer of.Close()
 
@@ -49,19 +50,19 @@ func packExecutor() (retErr error) {
 	defer gzw.Close()
 
 	if _, err := of.WriteString("package generated\n\n// Executor holds executor binary (it's all because golang dev team constantly refuses to implement process forking)\nconst Executor = \""); err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	if _, err := io.Copy(gzw, ef); err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	if err := gzw.Close(); err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	if err := encoder.Close(); err != nil {
-		return err
+		return errors.WithStack(err)
 	}
 	_, err = of.WriteString("\"\n")
-	return err
+	return errors.WithStack(err)
 }
 
 func buildApp(ctx context.Context, deps build.DepsFunc) error {

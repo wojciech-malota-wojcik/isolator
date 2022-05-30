@@ -1,8 +1,9 @@
 package main
 
 import (
-	"fmt"
 	"os"
+
+	"github.com/pkg/errors"
 
 	"github.com/outofforest/isolator"
 	"github.com/outofforest/isolator/client/wire"
@@ -62,7 +63,7 @@ func main() {
 		// wire.Result means command finished
 		case wire.Result:
 			if m.Error != "" {
-				panic(fmt.Errorf("command failed: %s", m.Error))
+				panic(errors.Errorf("command failed: %s", m.Error))
 			}
 			return
 		default:
@@ -79,7 +80,7 @@ func toStream(stream wire.Stream) (*os.File, error) {
 	case wire.StreamErr:
 		f = os.Stderr
 	default:
-		return nil, fmt.Errorf("unknown stream: %d", stream)
+		return nil, errors.Errorf("unknown stream: %d", stream)
 	}
 	return f, nil
 }

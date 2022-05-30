@@ -67,6 +67,8 @@ linters:
     - forbidigo
     - gomoddirectives
     - cyclop
+    - nonamedreturns
+    - exhaustruct
 
 linters-settings:
   nakedret:

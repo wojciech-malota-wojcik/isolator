@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,10 +15,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/outofforest/isolator/lib/retry"
 	"github.com/outofforest/logger"
+	"github.com/pkg/errors"
 	"github.com/ridge/must"
 	"go.uber.org/zap"
+
+	"github.com/outofforest/isolator/lib/retry"
 )
 
 // Apply fetches image from docker registry and integrates it inside directory
@@ -62,7 +63,7 @@ func authorize(ctx context.Context, c *http.Client, imageName string) (string, e
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", retry.Retryable(fmt.Errorf("unexpected response status: %d", resp.StatusCode))
+		return "", retry.Retryable(errors.Errorf("unexpected response status: %d", resp.StatusCode))
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -95,11 +96,11 @@ func layers(ctx context.Context, c *http.Client, token string, image, tag string
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, retry.Retryable(fmt.Errorf("unexpected response status: %d", resp.StatusCode))
+		return nil, retry.Retryable(errors.Errorf("unexpected response status: %d", resp.StatusCode))
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, retry.Retryable(err)
+		return nil, retry.Retryable(errors.WithStack(err))
 	}
 
 	data := struct {
@@ -128,13 +129,13 @@ func increment(ctx context.Context, c *http.Client, token, imageName, digest str
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return retry.Retryable(fmt.Errorf("unexpected response status: %d", resp.StatusCode))
+		return retry.Retryable(errors.Errorf("unexpected response status: %d", resp.StatusCode))
 	}
 
 	hasher := sha256.New()
 	gr, err := gzip.NewReader(io.TeeReader(resp.Body, hasher))
 	if err != nil {
-		return retry.Retryable(err)
+		return retry.Retryable(errors.WithStack(err))
 	}
 	defer gr.Close()
 
@@ -153,7 +154,7 @@ loop:
 			continue
 		}
 		if err := os.RemoveAll(header.Name); err != nil && !os.IsNotExist(err) {
-			return err
+			return errors.WithStack(err)
 		}
 		// We take mode from header.FileInfo().Mode(), not from header.Mode because they may be in different formats (meaning of bits may be different).
 		// header.FileInfo().Mode() returns compatible value.
@@ -169,7 +170,7 @@ loop:
 			dir := filepath.Dir(header.Name)
 			files, err := os.ReadDir(dir)
 			if err != nil {
-				return err
+				return errors.WithStack(err)
 			}
 			for _, f := range files {
 				toDelete := filepath.Join(dir, f.Name())
@@ -177,7 +178,7 @@ loop:
 					continue
 				}
 				if err := os.RemoveAll(toDelete); err != nil {
-					return err
+					return errors.WithStack(err)
 				}
 			}
 			continue
@@ -190,7 +191,7 @@ loop:
 					del[toDelete] = true
 					continue
 				}
-				return err
+				return errors.WithStack(err)
 			}
 			continue
 		case del[header.Name]:
@@ -199,42 +200,42 @@ loop:
 			continue
 		case header.Typeflag == tar.TypeDir:
 			if err := os.MkdirAll(header.Name, mode); err != nil {
-				return err
+				return errors.WithStack(err)
 			}
 		case header.Typeflag == tar.TypeReg:
 			f, err := os.OpenFile(header.Name, os.O_CREATE|os.O_WRONLY, mode)
 			if err != nil {
-				return err
+				return errors.WithStack(err)
 			}
 			_, err = io.Copy(f, tr)
 			_ = f.Close()
 			if err != nil {
-				return err
+				return errors.WithStack(err)
 			}
 		case header.Typeflag == tar.TypeSymlink:
 			if err := os.Symlink(header.Linkname, header.Name); err != nil {
-				return err
+				return errors.WithStack(err)
 			}
 		case header.Typeflag == tar.TypeLink:
 			// linked file may not exist yet, so let's create it - i will be overwritten later
 			f, err := os.OpenFile(header.Linkname, os.O_CREATE|os.O_EXCL, mode)
 			if err != nil {
 				if !os.IsExist(err) {
-					return err
+					return errors.WithStack(err)
 				}
 			} else {
 				_ = f.Close()
 			}
 			if err := os.Link(header.Linkname, header.Name); err != nil {
-				return err
+				return errors.WithStack(err)
 			}
 		default:
-			return fmt.Errorf("unsupported file type: %d", header.Typeflag)
+			return errors.Errorf("unsupported file type: %d", header.Typeflag)
 		}
 
 		added[header.Name] = true
 		if err := os.Lchown(header.Name, header.Uid, header.Gid); err != nil {
-			return err
+			return errors.WithStack(err)
 		}
 
 		// Unless CAP_FSETID capability is set for the process every operation modifying the file/dir will reset
@@ -243,14 +244,14 @@ loop:
 		// On linux mode is not supported for symlinks, mode is always taken from target location.
 		if header.Typeflag != tar.TypeSymlink {
 			if err := os.Chmod(header.Name, mode); err != nil {
-				return err
+				return errors.WithStack(err)
 			}
 		}
 	}
 
 	computedDigest := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
 	if computedDigest != digest {
-		return retry.Retryable(fmt.Errorf("digest doesn't match, expected: %s, got: %s", digest, computedDigest))
+		return retry.Retryable(errors.Errorf("digest doesn't match, expected: %s, got: %s", digest, computedDigest))
 	}
 	return nil
 }

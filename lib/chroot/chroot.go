@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"syscall"
+
+	"github.com/pkg/errors"
 )
 
 // Enter enters chroot and returns function to exit
@@ -26,10 +28,10 @@ func Enter(dir string) (exitFn func() error, err error) {
 
 		if root != nil {
 			if err := root.Chdir(); err != nil {
-				return err
+				return errors.WithStack(err)
 			}
 			if err := syscall.Chroot("."); err != nil {
-				return fmt.Errorf("exiting chroot failed: %w", err)
+				return errors.WithStack(fmt.Errorf("exiting chroot failed: %w", err))
 			}
 		}
 		return nil
@@ -51,7 +53,7 @@ func Enter(dir string) (exitFn func() error, err error) {
 	}
 
 	if err := syscall.Chroot(dir); err != nil {
-		return nil, fmt.Errorf("entering chroot failed: %w", err)
+		return nil, errors.WithStack(fmt.Errorf("entering chroot failed: %w", err))
 	}
 	if err := os.Chdir("/"); err != nil {
 		return nil, err
