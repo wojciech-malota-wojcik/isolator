@@ -2,12 +2,13 @@ package client
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"reflect"
 
-	"github.com/outofforest/isolator/client/wire"
+	"github.com/pkg/errors"
 	"github.com/ridge/must"
+
+	"github.com/outofforest/isolator/client/wire"
 )
 
 type message struct {
@@ -69,7 +70,7 @@ func typeToInstance(tName string) (interface{}, error) {
 	case "Log":
 		msg = &wire.Log{}
 	default:
-		return nil, fmt.Errorf("unrecognized type: %s", tName)
+		return nil, errors.Errorf("unrecognized type: %s", tName)
 	}
 	return msg, nil
 }

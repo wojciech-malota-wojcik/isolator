@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/outofforest/isolator/client"
 	"github.com/outofforest/isolator/generated"
 )
@@ -35,7 +37,7 @@ func Start(config Config) (c *client.Client, cleanerFn func() error, retErr erro
 		inPipe.Close()
 		if terminateExecutor != nil {
 			if err := terminateExecutor(); err != nil {
-				return fmt.Errorf("terminating executor failed: %w", err)
+				return errors.WithStack(fmt.Errorf("terminating executor failed: %w", err))
 			}
 		}
 		return nil
@@ -55,7 +57,7 @@ func Start(config Config) (c *client.Client, cleanerFn func() error, retErr erro
 
 	c = client.New(outPipe, inPipe)
 	if err := c.Send(config.Executor); err != nil {
-		return nil, nil, fmt.Errorf("sending config to executor failed: %w", err)
+		return nil, nil, errors.WithStack(fmt.Errorf("sending config to executor failed: %w", err))
 	}
 	return c, cleanerFnTmp, nil
 }
@@ -77,7 +79,7 @@ func startExecutor(config Config, outPipe io.WriteCloser, inPipe io.ReadCloser) 
 	executorPath, err := saveExecutor()
 	if err != nil {
 		defer close(errCh)
-		return nil, fmt.Errorf("saving executor executable failed: %w", err)
+		return nil, errors.WithStack(fmt.Errorf("saving executor executable failed: %w", err))
 	}
 
 	cmd := exec.Command(executorPath)
@@ -116,7 +118,7 @@ func startExecutor(config Config, outPipe io.WriteCloser, inPipe io.ReadCloser) 
 
 		err := cmd.Start()
 		if err != nil {
-			errCh <- fmt.Errorf("executor error: %w", err)
+			errCh <- errors.WithStack(fmt.Errorf("executor error: %w", err))
 			close(errCh)
 			return
 		}
@@ -141,19 +143,19 @@ func startExecutor(config Config, outPipe io.WriteCloser, inPipe io.ReadCloser) 
 			if err == nil {
 				return nil
 			}
-			return fmt.Errorf("executor failed: %w", err)
+			return errors.WithStack(fmt.Errorf("executor failed: %w", err))
 		case <-started:
 			// Executor runs with PID 1 inside namespace. From the perspective of kernel it is an init process.
 			// Init process receives only signals it subscribed to. So it may happen that SIGTERM is sent before executor
 			// subscribes to it. That's why SIGTERM is sent periodically here.
 			for {
 				if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
-					return fmt.Errorf("sending sigterm to executor failed: %w", err)
+					return errors.WithStack(fmt.Errorf("sending sigterm to executor failed: %w", err))
 				}
 				select {
 				case err := <-errCh:
 					if err != nil {
-						return fmt.Errorf("executor failed: %w", err)
+						return errors.WithStack(fmt.Errorf("executor failed: %w", err))
 					}
 					return nil
 				case <-time.After(100 * time.Millisecond):
@@ -166,23 +168,23 @@ func startExecutor(config Config, outPipe io.WriteCloser, inPipe io.ReadCloser) 
 func saveExecutor() (string, error) {
 	file, err := ioutil.TempFile("", "executor-*")
 	if err != nil {
-		return "", err
+		return "", errors.WithStack(err)
 	}
 	defer file.Close()
 
 	if err := os.Chmod(file.Name(), 0o700); err != nil {
-		return "", fmt.Errorf("making executor executable failed: %w", err)
+		return "", errors.WithStack(fmt.Errorf("making executor executable failed: %w", err))
 	}
 
 	gzr, err := gzip.NewReader(base64.NewDecoder(base64.RawStdEncoding, bytes.NewReader([]byte(generated.Executor))))
 	if err != nil {
-		return "", err
+		return "", errors.WithStack(err)
 	}
 	defer gzr.Close()
 
 	_, err = io.Copy(file, gzr)
 	if err != nil {
-		return "", err
+		return "", errors.WithStack(err)
 	}
 	return file.Name(), nil
 }

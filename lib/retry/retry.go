@@ -2,10 +2,10 @@ package retry
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/outofforest/logger"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
