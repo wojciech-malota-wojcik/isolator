@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -138,6 +137,7 @@ func execute(ctx context.Context, c *client.Client, msg wire.Execute) error {
 
 func prepareNewRoot() error {
 	// systemd remounts everything as MS_SHARED, to rpevent mess let's remount everything back to MS_PRIVATE inside namespace
+	//nolint:nosnakecase // Dependency
 	if err := syscall.Mount("", "/", "", syscall.MS_SLAVE|syscall.MS_REC, ""); err != nil {
 		return errors.WithStack(fmt.Errorf("remounting / as slave failed: %w", err))
 	}
@@ -148,6 +148,7 @@ func prepareNewRoot() error {
 	}
 
 	// PivotRoot requires new root to be on different mountpoint, so let's bind it to itself
+	//nolint:nosnakecase // Dependency
 	if err := syscall.Mount("root", "root", "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
 		return errors.WithStack(fmt.Errorf("binding new root to itself failed: %w", err))
 	}
@@ -186,6 +187,8 @@ func populateDev() error {
 	}
 	for _, dev := range []string{"console", "null", "zero", "random", "urandom"} {
 		devPath := filepath.Join(devDir, dev)
+
+		//nolint:nosnakecase // Dependency
 		f, err := os.OpenFile(devPath, os.O_CREATE|os.O_RDONLY, 0o644)
 		if err != nil {
 			return errors.WithStack(fmt.Errorf("creating dev/%s file failed: %w", dev, err))
@@ -193,6 +196,7 @@ func populateDev() error {
 		if err := f.Close(); err != nil {
 			return errors.WithStack(fmt.Errorf("closing dev/%s file failed: %w", dev, err))
 		}
+		//nolint:nosnakecase // Dependency
 		if err := syscall.Mount(filepath.Join("/", devPath), devPath, "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
 			return errors.WithStack(fmt.Errorf("binding dev/%s device failed: %w", dev, err))
 		}
@@ -221,10 +225,12 @@ func applyMounts(mounts []wire.Mount) error {
 		if err := os.MkdirAll(m.Container, 0o700); err != nil && !os.IsExist(err) {
 			return errors.WithStack(err)
 		}
+		//nolint:nosnakecase // Dependency
 		if err := syscall.Mount(m.Host, m.Container, "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
 			return errors.WithStack(fmt.Errorf("mounting %s to %s failed: %w", m.Host, m.Container, err))
 		}
 		if !m.Writable {
+			//nolint:nosnakecase // Dependency
 			if err := syscall.Mount(m.Host, m.Container, "", syscall.MS_BIND|syscall.MS_PRIVATE|syscall.MS_REMOUNT|syscall.MS_RDONLY, ""); err != nil {
 				return errors.WithStack(fmt.Errorf("remounting readonly %s to %s failed: %w", m.Host, m.Container, err))
 			}
@@ -240,9 +246,11 @@ func pivotRoot() error {
 	if err := syscall.PivotRoot(".", ".old"); err != nil {
 		return errors.WithStack(fmt.Errorf("pivoting / failed: %w", err))
 	}
+	//nolint:nosnakecase // Dependency
 	if err := syscall.Mount("", ".old", "", syscall.MS_PRIVATE|syscall.MS_REC, ""); err != nil {
 		return errors.WithStack(fmt.Errorf("remounting .old as private failed: %w", err))
 	}
+	//nolint:nosnakecase // Dependency
 	if err := syscall.Unmount(".old", syscall.MNT_DETACH); err != nil {
 		return errors.WithStack(fmt.Errorf("unmounting .old failed: %w", err))
 	}
@@ -253,7 +261,7 @@ func configureDNS() error {
 	if err := os.Mkdir("etc", 0o755); err != nil && !os.IsExist(err) {
 		return errors.WithStack(err)
 	}
-	return errors.WithStack(ioutil.WriteFile("etc/resolv.conf", []byte("nameserver 8.8.8.8\nnameserver 8.8.4.4\n"), 0o644))
+	return errors.WithStack(os.WriteFile("etc/resolv.conf", []byte("nameserver 8.8.8.8\nnameserver 8.8.4.4\n"), 0o644))
 }
 
 type logTransmitter struct {

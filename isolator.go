@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -87,7 +86,8 @@ func startExecutor(config Config, outPipe io.WriteCloser, inPipe io.ReadCloser) 
 	// FIXME (wojciech): Remove HOME once logger is fixed
 	cmd.Env = []string{"HOME=/", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Pdeathsig:  syscall.SIGKILL,
+		Pdeathsig: syscall.SIGKILL,
+		//nolint:nosnakecase // Dependency
 		Cloneflags: syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWUSER | syscall.CLONE_NEWIPC | syscall.CLONE_NEWUTS,
 		// by adding CAP_SYS_ADMIN executor may mount /proc
 		AmbientCaps: []uintptr{capSysAdmin},
@@ -167,7 +167,7 @@ func startExecutor(config Config, outPipe io.WriteCloser, inPipe io.ReadCloser) 
 }
 
 func saveExecutor() (string, error) {
-	file, err := ioutil.TempFile("", "executor-*")
+	file, err := os.CreateTemp("", "executor-*")
 	if err != nil {
 		return "", errors.WithStack(err)
 	}
