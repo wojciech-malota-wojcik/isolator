@@ -7,7 +7,7 @@ require (
 	github.com/outofforest/libexec v0.3.5
 	github.com/outofforest/logger v0.3.3
 	github.com/outofforest/parallel v0.2.2
-	github.com/outofforest/run v0.2.10
+	github.com/outofforest/run v0.2.12
 	github.com/pkg/errors v0.9.1
 	github.com/ridge/must v0.6.0
 	go.uber.org/zap v1.22.0
