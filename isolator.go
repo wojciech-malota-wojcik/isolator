@@ -83,8 +83,7 @@ func startExecutor(config Config, outPipe io.WriteCloser, inPipe io.ReadCloser) 
 
 	cmd := exec.Command(executorPath)
 	cmd.Dir = config.Dir
-	// FIXME (wojciech): Remove HOME once logger is fixed
-	cmd.Env = []string{"HOME=/", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"}
+	cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Pdeathsig: syscall.SIGKILL,
 		//nolint:nosnakecase // Dependency
