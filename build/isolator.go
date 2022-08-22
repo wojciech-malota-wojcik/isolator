@@ -37,6 +37,7 @@ func packExecutor() (retErr error) {
 	}
 	defer ef.Close()
 
+	//nolint:nosnakecase // Dependency
 	of, err := os.OpenFile("generated/executor.go", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 	if err != nil {
 		return errors.WithStack(err)
