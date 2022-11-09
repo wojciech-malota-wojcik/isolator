@@ -3,7 +3,7 @@ module github.com/outofforest/isolator
 go 1.18
 
 require (
-	github.com/otiai10/copy v1.7.0
+	github.com/otiai10/copy v1.9.0
 	github.com/outofforest/libexec v0.3.6
 	github.com/outofforest/logger v0.3.3
 	github.com/outofforest/parallel v0.2.3
@@ -18,4 +18,5 @@ require (
 	github.com/spf13/pflag v1.0.5 // indirect
 	go.uber.org/atomic v1.9.0 // indirect
 	go.uber.org/multierr v1.8.0 // indirect
+	golang.org/x/sys v0.0.0-20220715151400-c0bba94af5f8 // indirect
 )
