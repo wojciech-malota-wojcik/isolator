@@ -3,7 +3,7 @@ module github.com/outofforest/isolator
 go 1.18
 
 require (
-	github.com/otiai10/copy v1.11.0
+	github.com/otiai10/copy v1.12.0
 	github.com/outofforest/libexec v0.3.8
 	github.com/outofforest/logger v0.3.4
 	github.com/outofforest/parallel v0.2.3
