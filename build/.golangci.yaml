@@ -69,6 +69,8 @@ linters:
     - cyclop
     - nonamedreturns
     - exhaustruct
+    - depguard
+    - musttag
 
 linters-settings:
   nakedret:

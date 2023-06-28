@@ -57,7 +57,7 @@ func main() {
 			if err != nil {
 				panic(err)
 			}
-			if _, err := stream.Write([]byte(m.Text)); err != nil {
+			if _, err := stream.WriteString(m.Text); err != nil {
 				panic(err)
 			}
 		// wire.Result means command finished
