@@ -154,7 +154,7 @@ func prepareNewRoot() error {
 	}
 
 	// Let's assume that new filesystem is the current working dir even before pivoting to make life easier
-	return errors.WithStack(os.Chdir("root"))
+	return errors.Wrapf(os.Chdir("root"), "chroot")
 }
 
 func mountProc() error {
