@@ -71,6 +71,8 @@ linters:
     - exhaustruct
     - depguard
     - musttag
+    - nosnakecase
+    - golint
 
 linters-settings:
   nakedret:

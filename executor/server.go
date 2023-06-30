@@ -5,46 +5,39 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"syscall"
 
-	cp "github.com/otiai10/copy"
-	"github.com/outofforest/libexec"
 	"github.com/outofforest/parallel"
 	"github.com/pkg/errors"
 
-	"github.com/outofforest/isolator/client"
-	"github.com/outofforest/isolator/client/wire"
 	"github.com/outofforest/isolator/lib/chroot"
-	"github.com/outofforest/isolator/lib/docker"
-	"github.com/outofforest/isolator/lib/libhttp"
+	"github.com/outofforest/isolator/wire"
 )
 
 // Run runs isolator server
-func Run(ctx context.Context) error {
-	c := client.New(os.Stdin, os.Stdout)
+func Run(ctx context.Context, config Config) error {
 	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
 		spawn("watchdog", parallel.Fail, func(ctx context.Context) error {
 			<-ctx.Done()
 			// os.Stdin is used as input stream for client so it has to be closed to force client.Receive() to exit
 			_ = os.Stdin.Close()
-			return ctx.Err()
+			return errors.WithStack(ctx.Err())
 		})
 		spawn("server", parallel.Exit, func(ctx context.Context) error {
-			msg, err := c.Receive()
+			decode := wire.NewDecoder(os.Stdin, append(config.Router.Types(), wire.Config{}))
+			encode := wire.NewEncoder(os.Stdout)
+
+			content, err := decode()
 			if err != nil {
 				return errors.WithStack(fmt.Errorf("fetching configuration failed: %w", err))
 			}
-			config, ok := msg.(wire.Config)
+			runtimeConfig, ok := content.(wire.Config)
 			if !ok {
-				return errors.Errorf("expected Config message but got: %T", msg)
+				return errors.Errorf("expected Config message but got: %T", content)
 			}
 
-			// creating http client before pivoting/chrooting because client reads CA certificates from system pool
-			httpClient := libhttp.NewSelfClient()
-
-			if config.Chroot {
+			if runtimeConfig.Chroot {
 				exitChroot, err := chroot.Enter(".")
 				if err != nil {
 					return errors.WithStack(err)
@@ -65,7 +58,7 @@ func Run(ctx context.Context) error {
 				if err := populateDev(); err != nil {
 					return err
 				}
-				if err := applyMounts(config.Mounts); err != nil {
+				if err := applyMounts(runtimeConfig.Mounts); err != nil {
 					return errors.WithStack(fmt.Errorf("mounting host directories failed: %w", err))
 				}
 
@@ -79,7 +72,7 @@ func Run(ctx context.Context) error {
 			}
 
 			for {
-				msg, err := c.Receive()
+				content, err := decode()
 				if err != nil {
 					if ctx.Err() != nil || errors.Is(err, io.EOF) {
 						return ctx.Err()
@@ -87,22 +80,18 @@ func Run(ctx context.Context) error {
 					return errors.WithStack(fmt.Errorf("receiving message failed: %w", err))
 				}
 
-				switch m := msg.(type) {
-				case wire.Execute:
-					err = execute(ctx, c, m)
-				case wire.Copy:
-					err = cp.Copy(m.Src, m.Dst, cp.Options{PreserveTimes: true, PreserveOwner: true})
-				case wire.InitFromDocker:
-					err = docker.Apply(ctx, httpClient, m.Image, m.Tag)
-				default:
-					return errors.Errorf("unexpected message: %T", m)
+				handler, err := config.Router.Handler(content)
+				if err != nil {
+					return err
 				}
 
 				var errStr string
-				if err != nil {
-					errStr = err.Error()
+				if err := handler(ctx, content, encode); err != nil {
+					if err != nil {
+						errStr = err.Error()
+					}
 				}
-				if err := c.Send(wire.Result{
+				if err := encode(wire.Result{
 					Error: errStr,
 				}); err != nil {
 					return errors.WithStack(fmt.Errorf("command status reporting failed: %w", err))
@@ -113,31 +102,8 @@ func Run(ctx context.Context) error {
 	})
 }
 
-func execute(ctx context.Context, c *client.Client, msg wire.Execute) error {
-	outTransmitter := &logTransmitter{
-		stream: wire.StreamOut,
-		client: c,
-	}
-	errTransmitter := &logTransmitter{
-		stream: wire.StreamErr,
-		client: c,
-	}
-
-	cmd := exec.Command("/bin/sh", "-c", msg.Command)
-	cmd.Stdout = outTransmitter
-	cmd.Stderr = errTransmitter
-
-	err := libexec.Exec(ctx, cmd)
-
-	_ = outTransmitter.Flush()
-	_ = errTransmitter.Flush()
-
-	return err
-}
-
 func prepareNewRoot() error {
 	// systemd remounts everything as MS_SHARED, to rpevent mess let's remount everything back to MS_PRIVATE inside namespace
-	//nolint:nosnakecase // Dependency
 	if err := syscall.Mount("", "/", "", syscall.MS_SLAVE|syscall.MS_REC, ""); err != nil {
 		return errors.WithStack(fmt.Errorf("remounting / as slave failed: %w", err))
 	}
@@ -148,7 +114,6 @@ func prepareNewRoot() error {
 	}
 
 	// PivotRoot requires new root to be on different mountpoint, so let's bind it to itself
-	//nolint:nosnakecase // Dependency
 	if err := syscall.Mount("root", "root", "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
 		return errors.WithStack(fmt.Errorf("binding new root to itself failed: %w", err))
 	}
@@ -188,7 +153,6 @@ func populateDev() error {
 	for _, dev := range []string{"console", "null", "zero", "random", "urandom"} {
 		devPath := filepath.Join(devDir, dev)
 
-		//nolint:nosnakecase // Dependency
 		f, err := os.OpenFile(devPath, os.O_CREATE|os.O_RDONLY, 0o644)
 		if err != nil {
 			return errors.WithStack(fmt.Errorf("creating dev/%s file failed: %w", dev, err))
@@ -196,7 +160,6 @@ func populateDev() error {
 		if err := f.Close(); err != nil {
 			return errors.WithStack(fmt.Errorf("closing dev/%s file failed: %w", dev, err))
 		}
-		//nolint:nosnakecase // Dependency
 		if err := syscall.Mount(filepath.Join("/", devPath), devPath, "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
 			return errors.WithStack(fmt.Errorf("binding dev/%s device failed: %w", dev, err))
 		}
@@ -225,12 +188,10 @@ func applyMounts(mounts []wire.Mount) error {
 		if err := os.MkdirAll(m.Container, 0o700); err != nil && !os.IsExist(err) {
 			return errors.WithStack(err)
 		}
-		//nolint:nosnakecase // Dependency
 		if err := syscall.Mount(m.Host, m.Container, "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
 			return errors.WithStack(fmt.Errorf("mounting %s to %s failed: %w", m.Host, m.Container, err))
 		}
 		if !m.Writable {
-			//nolint:nosnakecase // Dependency
 			if err := syscall.Mount(m.Host, m.Container, "", syscall.MS_BIND|syscall.MS_PRIVATE|syscall.MS_REMOUNT|syscall.MS_RDONLY, ""); err != nil {
 				return errors.WithStack(fmt.Errorf("remounting readonly %s to %s failed: %w", m.Host, m.Container, err))
 			}
@@ -246,11 +207,9 @@ func pivotRoot() error {
 	if err := syscall.PivotRoot(".", ".old"); err != nil {
 		return errors.WithStack(fmt.Errorf("pivoting / failed: %w", err))
 	}
-	//nolint:nosnakecase // Dependency
 	if err := syscall.Mount("", ".old", "", syscall.MS_PRIVATE|syscall.MS_REC, ""); err != nil {
 		return errors.WithStack(fmt.Errorf("remounting .old as private failed: %w", err))
 	}
-	//nolint:nosnakecase // Dependency
 	if err := syscall.Unmount(".old", syscall.MNT_DETACH); err != nil {
 		return errors.WithStack(fmt.Errorf("unmounting .old failed: %w", err))
 	}
@@ -262,39 +221,4 @@ func configureDNS() error {
 		return errors.WithStack(err)
 	}
 	return errors.WithStack(os.WriteFile("etc/resolv.conf", []byte("nameserver 8.8.8.8\nnameserver 8.8.4.4\n"), 0o644))
-}
-
-type logTransmitter struct {
-	client *client.Client
-	stream wire.Stream
-
-	buf []byte
-}
-
-func (lt *logTransmitter) Write(data []byte) (int, error) {
-	length := len(lt.buf) + len(data)
-	if length < 100 {
-		lt.buf = append(lt.buf, data...)
-		return len(data), nil
-	}
-	buf := make([]byte, length)
-	copy(buf, lt.buf)
-	copy(buf[len(lt.buf):], data)
-	err := lt.client.Send(wire.Log{Stream: lt.stream, Text: string(buf)})
-	if err != nil {
-		return 0, err
-	}
-	lt.buf = make([]byte, 0, len(lt.buf))
-	return len(data), nil
-}
-
-func (lt *logTransmitter) Flush() error {
-	if len(lt.buf) == 0 {
-		return nil
-	}
-	if err := lt.client.Send(wire.Log{Stream: lt.stream, Text: string(lt.buf)}); err != nil {
-		return err
-	}
-	lt.buf = make([]byte, 0, len(lt.buf))
-	return nil
 }

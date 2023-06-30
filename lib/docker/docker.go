@@ -203,7 +203,6 @@ loop:
 				return errors.WithStack(err)
 			}
 		case header.Typeflag == tar.TypeReg:
-			//nolint:nosnakecase // Dependency
 			f, err := os.OpenFile(header.Name, os.O_CREATE|os.O_WRONLY, mode)
 			if err != nil {
 				return errors.WithStack(err)
@@ -219,7 +218,6 @@ loop:
 			}
 		case header.Typeflag == tar.TypeLink:
 			// linked file may not exist yet, so let's create it - i will be overwritten later
-			//nolint:nosnakecase // Dependency
 			f, err := os.OpenFile(header.Linkname, os.O_CREATE|os.O_EXCL, mode)
 			if err != nil {
 				if !os.IsExist(err) {
