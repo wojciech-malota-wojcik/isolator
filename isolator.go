@@ -3,7 +3,6 @@ package isolator
 import (
 	"context"
 	"io"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"syscall"
@@ -11,7 +10,7 @@ import (
 	"github.com/outofforest/libexec"
 	"github.com/outofforest/parallel"
 	"github.com/pkg/errors"
-	"github.com/ridge/must"
+	"golang.org/x/sys/unix"
 
 	"github.com/outofforest/isolator/executor"
 	"github.com/outofforest/isolator/wire"
@@ -141,12 +140,12 @@ func sanitizeConfig(config Config) (Config, error) {
 }
 
 func newExecutorServerCommand(config Config) *exec.Cmd {
-	cmd := exec.Command(must.String(filepath.Abs(must.String(filepath.EvalSymlinks(must.String(os.Executable()))))), config.ExecutorArg)
+	cmd := exec.Command("/proc/self/exe", config.ExecutorArg)
 	cmd.Dir = config.Dir
 	cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"}
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Pdeathsig:  syscall.SIGKILL,
-		Cloneflags: syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWUSER | syscall.CLONE_NEWIPC | syscall.CLONE_NEWUTS,
+	cmd.SysProcAttr = &unix.SysProcAttr{
+		Pdeathsig:  unix.SIGKILL,
+		Cloneflags: unix.CLONE_NEWPID | unix.CLONE_NEWNS | unix.CLONE_NEWUSER | unix.CLONE_NEWIPC | unix.CLONE_NEWUTS | unix.CLONE_NEWCGROUP,
 		// by adding CAP_SYS_ADMIN executor may mount /proc
 		AmbientCaps: []uintptr{capSysAdmin},
 		UidMappings: []syscall.SysProcIDMap{
