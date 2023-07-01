@@ -1,67 +1,135 @@
 package isolator
 
 import (
-	"bytes"
-	"compress/gzip"
-	"encoding/base64"
-	"fmt"
+	"context"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"syscall"
-	"time"
 
+	"github.com/outofforest/libexec"
+	"github.com/outofforest/parallel"
 	"github.com/pkg/errors"
+	"github.com/ridge/must"
 
-	"github.com/outofforest/isolator/client"
-	"github.com/outofforest/isolator/generated"
+	"github.com/outofforest/isolator/executor"
+	"github.com/outofforest/isolator/wire"
 )
 
 const capSysAdmin = 21
 
-// Start dumps executor to file, starts it, connects to it and returns client
-func Start(config Config) (c *client.Client, cleanerFn func() error, retErr error) {
+// Run runs executor server and communication channel.
+func Run(ctx context.Context, config Config) error {
 	config, err := sanitizeConfig(config)
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
 
 	outPipe := newPipe()
 	inPipe := newPipe()
 
-	var terminateExecutor func() error
-	cleanerFnTmp := func() error {
-		outPipe.Close()
-		inPipe.Close()
-		if terminateExecutor != nil {
-			if err := terminateExecutor(); err != nil {
-				return errors.WithStack(fmt.Errorf("terminating executor failed: %w", err))
+	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
+		startCh := make(chan struct{})
+
+		spawn("server", parallel.Fail, func(ctx context.Context) error {
+			select {
+			case <-ctx.Done():
+				return errors.WithStack(err)
+			case <-startCh:
 			}
-		}
+
+			cmd := newExecutorServerCommand(config)
+			cmd.Stdout = outPipe
+			cmd.Stdin = inPipe
+
+			return libexec.Exec(ctx, cmd)
+		})
+		spawn("watchdog", parallel.Fail, func(ctx context.Context) error {
+			<-ctx.Done()
+
+			// cmd.Wait() called inside libexec does not return until stdin, stdout and stderr are fully processed,
+			// so they must be closed here. Otherwise, cmd never exits.
+			_ = outPipe.Close()
+			_ = inPipe.Close()
+
+			return errors.WithStack(ctx.Err())
+		})
+		spawn("client", parallel.Fail, func(ctx context.Context) error {
+			return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
+				spawn("sender", parallel.Fail, func(ctx context.Context) error {
+					encode := wire.NewEncoder(inPipe)
+					var serverStarted bool
+					for {
+						var content interface{}
+						var ok bool
+
+						select {
+						case <-ctx.Done():
+							return errors.WithStack(ctx.Err())
+						case content, ok = <-config.Outgoing:
+						}
+
+						if !ok {
+							return errors.WithStack(ctx.Err())
+						}
+
+						if !serverStarted {
+							serverStarted = true
+							close(startCh)
+
+							// config is guaranteed to be the first message sent
+							err := encode(config.Executor)
+							if err != nil {
+								if errors.Is(err, io.EOF) {
+									return errors.WithStack(ctx.Err())
+								}
+								return errors.WithStack(err)
+							}
+						}
+
+						err = encode(content)
+						if err != nil {
+							if errors.Is(err, io.EOF) {
+								return errors.WithStack(ctx.Err())
+							}
+							return errors.WithStack(err)
+						}
+					}
+				})
+				spawn("receiver", parallel.Fail, func(ctx context.Context) error {
+					defer close(config.Incoming)
+
+					decode := wire.NewDecoder(outPipe, config.Types)
+					for {
+						content, err := decode()
+						if err != nil {
+							if errors.Is(err, io.EOF) {
+								return errors.WithStack(ctx.Err())
+							}
+							return errors.WithStack(err)
+						}
+
+						select {
+						case <-ctx.Done():
+							return errors.WithStack(ctx.Err())
+						case config.Incoming <- content:
+						}
+					}
+				})
+
+				return nil
+			})
+		})
+
 		return nil
-	}
-	defer func() {
-		if retErr != nil {
-			if err := cleanerFnTmp(); err != nil {
-				retErr = err
-			}
-		}
-	}()
-
-	terminateExecutor, err = startExecutor(config, outPipe, inPipe)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	c = client.New(outPipe, inPipe)
-	if err := c.Send(config.Executor); err != nil {
-		return nil, nil, errors.WithStack(fmt.Errorf("sending config to executor failed: %w", err))
-	}
-	return c, cleanerFnTmp, nil
+	})
 }
 
 func sanitizeConfig(config Config) (Config, error) {
+	if config.ExecutorArg == "" {
+		config.ExecutorArg = executor.DefaultArg
+	}
 	for i, m := range config.Executor.Mounts {
 		var err error
 		config.Executor.Mounts[i].Host, err = filepath.Abs(m.Host)
@@ -72,21 +140,12 @@ func sanitizeConfig(config Config) (Config, error) {
 	return config, nil
 }
 
-func startExecutor(config Config, outPipe io.WriteCloser, inPipe io.ReadCloser) (func() error, error) {
-	errCh := make(chan error, 1)
-
-	executorPath, err := saveExecutor()
-	if err != nil {
-		defer close(errCh)
-		return nil, errors.WithStack(fmt.Errorf("saving executor executable failed: %w", err))
-	}
-
-	cmd := exec.Command(executorPath)
+func newExecutorServerCommand(config Config) *exec.Cmd {
+	cmd := exec.Command(must.String(filepath.Abs(must.String(filepath.EvalSymlinks(must.String(os.Executable()))))), config.ExecutorArg)
 	cmd.Dir = config.Dir
 	cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Pdeathsig: syscall.SIGKILL,
-		//nolint:nosnakecase // Dependency
+		Pdeathsig:  syscall.SIGKILL,
 		Cloneflags: syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWUSER | syscall.CLONE_NEWIPC | syscall.CLONE_NEWUTS,
 		// by adding CAP_SYS_ADMIN executor may mount /proc
 		AmbientCaps: []uintptr{capSysAdmin},
@@ -107,86 +166,7 @@ func startExecutor(config Config, outPipe io.WriteCloser, inPipe io.ReadCloser) 
 		},
 	}
 
-	cmd.Stdout = outPipe
-	cmd.Stdin = inPipe
-	cmd.Stderr = os.Stderr
-
-	started := make(chan struct{})
-	go func() {
-		defer inPipe.Close()
-		defer outPipe.Close()
-
-		err := cmd.Start()
-		if err != nil {
-			errCh <- errors.WithStack(fmt.Errorf("executor error: %w", err))
-			close(errCh)
-			return
-		}
-		close(started)
-		// cmd.Process.Wait is used because cmd.Wait exits only after cmd.Stdout is closed by user which creates chicke and egg problem
-		_, err = cmd.Process.Wait()
-		errCh <- err
-		close(errCh)
-	}()
-
-	return func() (retErr error) {
-		defer func() {
-			if err := os.Remove(executorPath); err != nil && !os.IsNotExist(err) {
-				if retErr == nil {
-					retErr = err
-				}
-			}
-		}()
-
-		select {
-		case err := <-errCh:
-			if err == nil {
-				return nil
-			}
-			return errors.WithStack(fmt.Errorf("executor failed: %w", err))
-		case <-started:
-			// Executor runs with PID 1 inside namespace. From the perspective of kernel it is an init process.
-			// Init process receives only signals it subscribed to. So it may happen that SIGTERM is sent before executor
-			// subscribes to it. That's why SIGTERM is sent periodically here.
-			for {
-				if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
-					return errors.WithStack(fmt.Errorf("sending sigterm to executor failed: %w", err))
-				}
-				select {
-				case err := <-errCh:
-					if err != nil {
-						return errors.WithStack(fmt.Errorf("executor failed: %w", err))
-					}
-					return nil
-				case <-time.After(100 * time.Millisecond):
-				}
-			}
-		}
-	}, nil
-}
-
-func saveExecutor() (string, error) {
-	file, err := os.CreateTemp("", "executor-*")
-	if err != nil {
-		return "", errors.WithStack(err)
-	}
-	defer file.Close()
-
-	if err := os.Chmod(file.Name(), 0o700); err != nil {
-		return "", errors.WithStack(fmt.Errorf("making executor executable failed: %w", err))
-	}
-
-	gzr, err := gzip.NewReader(base64.NewDecoder(base64.RawStdEncoding, bytes.NewReader([]byte(generated.Executor))))
-	if err != nil {
-		return "", errors.WithStack(err)
-	}
-	defer gzr.Close()
-
-	_, err = io.Copy(file, gzr)
-	if err != nil {
-		return "", errors.WithStack(err)
-	}
-	return file.Name(), nil
+	return cmd
 }
 
 func newPipe() *pipe {

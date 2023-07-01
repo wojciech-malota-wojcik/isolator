@@ -1,75 +1,131 @@
 package main
 
 import (
+	"context"
 	"os"
 
+	"github.com/outofforest/parallel"
+	"github.com/outofforest/run"
 	"github.com/pkg/errors"
 
 	"github.com/outofforest/isolator"
-	"github.com/outofforest/isolator/client/wire"
+	"github.com/outofforest/isolator/executor"
+	"github.com/outofforest/isolator/wire"
 )
 
 func main() {
-	config := isolator.Config{
-		// Directory where container is created, filesystem of container should exist inside "root" directory there
-		Dir: "/tmp/example",
-		Executor: wire.Config{
-			Mounts: []wire.Mount{
-				// Let's make host's /tmp available inside container under /test
-				{
-					Host:      "/tmp",
-					Container: "/test",
+	executor.Catch(executor.Config{
+		// Define commands recognized by the executor server.
+		Router: executor.NewRouter().
+			RegisterHandler(wire.Execute{}, executor.ExecuteHandler).
+			RegisterHandler(wire.InitFromDocker{}, executor.NewInitFromDockerHandler()),
+	}, func() {
+		run.Run("example", nil, func(ctx context.Context) error {
+			incoming := make(chan interface{})
+			outgoing := make(chan interface{})
+
+			rootDir := "/tmp/example"
+			mountedDir := "/tmp/mount"
+
+			if err := os.MkdirAll(rootDir, 0o700); err != nil {
+				return errors.WithStack(err)
+			}
+			if err := os.MkdirAll(mountedDir, 0o700); err != nil {
+				return errors.WithStack(err)
+			}
+
+			config := isolator.Config{
+				// Directory where container is created, filesystem of container should exist inside "root" directory there
+				Dir: rootDir,
+				Types: []interface{}{
+					wire.Result{},
+					wire.Log{},
 				},
-			},
-		},
-	}
-
-	// Starting isolator. If passed ctx is canceled, isolator.Start breaks and returns error.
-	// Isolator creates `root` directory under one passed to `isolator.Start`. The `root` directory is mounted as `/`.
-	// inside container.
-	// It is assumed that `root` contains `bin/sh` shell and all the required libraries. Without them it will fail.
-	client, terminateIsolator, err := isolator.Start(config)
-	if err != nil {
-		panic(err)
-	}
-	defer func() {
-		// Clean up on exit
-		if err := terminateIsolator(); err != nil {
-			panic(err)
-		}
-	}()
-
-	// Request to execute command in isolation
-	if err := client.Send(wire.Execute{Command: `echo "Hello world!"`}); err != nil {
-		panic(err)
-	}
-
-	// Communication channel loop
-	for {
-		msg, err := client.Receive()
-		if err != nil {
-			panic(err)
-		}
-		switch m := msg.(type) {
-		// wire.Log contains message printed by executed command to stdout or stderr
-		case wire.Log:
-			stream, err := toStream(m.Stream)
-			if err != nil {
-				panic(err)
+				Executor: wire.Config{
+					Mounts: []wire.Mount{
+						// Let's make host's /tmp/mount available inside container under /test
+						{
+							Host:      mountedDir,
+							Container: "/test",
+							Writable:  true,
+						},
+						// To be able to execute /bin/sh
+						{
+							Host:      "/bin",
+							Container: "/bin",
+						},
+						{
+							Host:      "/lib",
+							Container: "/lib",
+						},
+						{
+							Host:      "/lib64",
+							Container: "/lib64",
+						},
+					},
+				},
+				Incoming: incoming,
+				Outgoing: outgoing,
 			}
-			if _, err := stream.WriteString(m.Text); err != nil {
-				panic(err)
-			}
-		// wire.Result means command finished
-		case wire.Result:
-			if m.Error != "" {
-				panic(errors.Errorf("command failed: %s", m.Error))
-			}
-			return
-		default:
-			panic("unexpected message received")
-		}
-	}
+
+			return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
+				spawn("isolator", parallel.Fail, func(ctx context.Context) error {
+					// Starting isolator. If passed ctx is canceled, isolator exits.
+					// Isolator creates `root` directory under one passed to isolator. The `root` directory is mounted as `/`.
+					// inside container.
+					// It is assumed that `root` contains `bin/sh` shell and all the required libraries. Without them it will fail.
+
+					return isolator.Run(ctx, config)
+				})
+				spawn("client", parallel.Exit, func(ctx context.Context) error {
+					// Request to execute command in isolation
+					select {
+					case <-ctx.Done():
+						return errors.WithStack(ctx.Err())
+					case outgoing <- wire.Execute{Command: `echo "Hello world!"`}:
+					}
+
+					// Communication channel loop
+					for {
+						var content interface{}
+						var ok bool
+
+						select {
+						case <-ctx.Done():
+							return errors.WithStack(ctx.Err())
+						case content, ok = <-incoming:
+						}
+
+						if !ok {
+							return errors.WithStack(ctx.Err())
+						}
+
+						switch m := content.(type) {
+						// wire.Log contains message printed by executed command to stdout or stderr
+						case wire.Log:
+							stream, err := toStream(m.Stream)
+							if err != nil {
+								panic(err)
+							}
+							if _, err := stream.WriteString(m.Text); err != nil {
+								panic(err)
+							}
+						// wire.Result means command finished
+						case wire.Result:
+							if m.Error != "" {
+								panic(errors.Errorf("command failed: %s", m.Error))
+							}
+							return nil
+						default:
+							panic("unexpected message received")
+						}
+					}
+				})
+
+				return nil
+			})
+		})
+	})
 }
 
 func toStream(stream wire.Stream) (*os.File, error) {

@@ -17,4 +17,4 @@ jobs:
         run: |
           cd ./build
           go build -o ../bin/.cache/build ./cmd
-          ../bin/.cache/build dev/lint dev/test build
+          ../bin/.cache/build dev/lint dev/test
