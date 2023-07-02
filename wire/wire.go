@@ -22,8 +22,8 @@ type Mount struct {
 
 // Config stores configuration of executor
 type Config struct {
-	// Chroot tells if chroot should be used instead of pivoting
-	Chroot bool
+	// NoStandardMounts tells to not mount standard mounts like /proc, /dev, /tmp ... inside new root.
+	NoStandardMounts bool
 
 	// Mounts is the list of bindings to apply inside container
 	Mounts []Mount

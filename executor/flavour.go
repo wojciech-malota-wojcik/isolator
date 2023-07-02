@@ -7,8 +7,6 @@ import (
 	"github.com/outofforest/logger"
 	"github.com/outofforest/parallel"
 	"github.com/outofforest/run"
-
-	"github.com/outofforest/isolator/initprocess"
 )
 
 // DefaultArg is the default CLI arg for starting the executor server.
@@ -36,11 +34,6 @@ func NewFlavour(config Config) run.FlavourFunc {
 			return appFunc(ctx)
 		}
 
-		ctx = logger.WithLogger(ctx, logger.Get(ctx).Named("executor"))
-		return run.WithFlavours(ctx, []run.FlavourFunc{
-			initprocess.Flavour,
-		}, func(ctx context.Context) error {
-			return runServer(ctx, config)
-		})
+		return runServer(logger.WithLogger(ctx, logger.Get(ctx).Named("executor")), config)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"os/exec"
 
 	"github.com/outofforest/libexec"
+	"github.com/outofforest/logger"
 	"github.com/pkg/errors"
 
 	"github.com/outofforest/isolator/lib/docker"
@@ -45,6 +46,8 @@ func ExecuteHandler(ctx context.Context, content interface{}, encode wire.Encode
 	cmd := exec.Command("/bin/sh", "-c", m.Command)
 	cmd.Stdout = outTransmitter
 	cmd.Stderr = errTransmitter
+
+	logger.Get(ctx).Info("Executing command")
 
 	err := libexec.Exec(ctx, cmd)
 
