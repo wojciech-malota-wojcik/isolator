@@ -14,13 +14,15 @@ import (
 )
 
 func main() {
-	executor.Catch(executor.Config{
-		// Define commands recognized by the executor server.
-		Router: executor.NewRouter().
-			RegisterHandler(wire.Execute{}, executor.ExecuteHandler).
-			RegisterHandler(wire.InitFromDocker{}, executor.NewInitFromDockerHandler()),
-	}, func() {
-		run.Run("example", nil, func(ctx context.Context) error {
+	run.Run("example", nil, func(ctx context.Context) error {
+		return run.WithFlavours(ctx, []run.FlavourFunc{
+			executor.NewFlavour(executor.Config{
+				// Define commands recognized by the executor server.
+				Router: executor.NewRouter().
+					RegisterHandler(wire.Execute{}, executor.ExecuteHandler).
+					RegisterHandler(wire.InitFromDocker{}, executor.NewInitFromDockerHandler()),
+			}),
+		}, func(ctx context.Context) error {
 			incoming := make(chan interface{})
 			outgoing := make(chan interface{})
 
