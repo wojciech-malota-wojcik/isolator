@@ -15,8 +15,7 @@ import (
 	"github.com/outofforest/isolator/wire"
 )
 
-// Run runs isolator server
-func Run(ctx context.Context, config Config) error {
+func runServer(ctx context.Context, config Config) error {
 	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
 		spawn("watchdog", parallel.Fail, func(ctx context.Context) error {
 			<-ctx.Done()
