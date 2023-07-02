@@ -31,8 +31,8 @@ var (
 	procRegExp = regexp.MustCompile("^[0-9]+$")
 )
 
-// Run is runs logic required by the init process. It awaits zombie processes and terminates all the child processes on exit.
-func Run(ctx context.Context, appFunc parallel.Task) error {
+// Flavour adds logic required by the init process. It awaits zombie processes and terminates all the child processes on exit.
+func Flavour(ctx context.Context, appFunc parallel.Task) error {
 	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
 		appTerminatedCh := make(chan struct{})
 
