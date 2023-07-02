@@ -6,6 +6,8 @@ import (
 
 	"github.com/outofforest/logger"
 	"github.com/outofforest/run"
+
+	"github.com/outofforest/isolator/initprocess"
 )
 
 // DefaultArg is the default CLI arg for starting the executor server.
@@ -37,6 +39,8 @@ func Catch(config Config, appFunc func()) {
 		if err := logger.Flags(logger.DefaultConfig, "executor").Parse(os.Args[1:]); err != nil {
 			return err
 		}
-		return Run(ctx, config)
+		return initprocess.Run(ctx, func(ctx context.Context) error {
+			return runServer(ctx, config)
+		})
 	})
 }
