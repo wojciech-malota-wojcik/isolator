@@ -7,6 +7,7 @@ import (
 	"github.com/outofforest/logger"
 	"github.com/outofforest/parallel"
 	"github.com/outofforest/run"
+	"github.com/pkg/errors"
 )
 
 // DefaultArg is the default CLI arg for starting the executor server.
@@ -33,7 +34,10 @@ func NewFlavour(config Config) run.FlavourFunc {
 		if len(os.Args) < 2 || os.Args[1] != config.ExecutorArg {
 			return appFunc(ctx)
 		}
+		if len(os.Args) != 3 {
+			return errors.New("exactly three arguments are required")
+		}
 
-		return runServer(logger.WithLogger(ctx, logger.Get(ctx).Named("executor")), config)
+		return runServer(logger.WithLogger(ctx, logger.Get(ctx).Named("executor")), config, os.Args[2])
 	}
 }

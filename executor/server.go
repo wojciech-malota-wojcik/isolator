@@ -19,7 +19,7 @@ import (
 	"github.com/outofforest/isolator/wire"
 )
 
-func runServer(ctx context.Context, config Config) error {
+func runServer(ctx context.Context, config Config, rootDir string) error {
 	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
 		spawn("watchdog", parallel.Fail, func(ctx context.Context) error {
 			<-ctx.Done()
@@ -40,7 +40,7 @@ func runServer(ctx context.Context, config Config) error {
 				return errors.Errorf("expected Config message but got: %T", content)
 			}
 
-			if err := prepareNewRoot(); err != nil {
+			if err := prepareNewRoot(rootDir); err != nil {
 				return errors.WithStack(fmt.Errorf("preparing new root filesystem failed: %w", err))
 			}
 
@@ -107,24 +107,19 @@ func runServer(ctx context.Context, config Config) error {
 	})
 }
 
-func prepareNewRoot() error {
+func prepareNewRoot(rootDir string) error {
 	// systemd remounts everything as MS_SHARED, to prevent mess let's remount everything back to MS_PRIVATE inside namespace
 	if err := syscall.Mount("", "/", "", syscall.MS_SLAVE|syscall.MS_REC, ""); err != nil {
 		return errors.WithStack(fmt.Errorf("remounting / as slave failed: %w", err))
 	}
 
-	// PivotRoot can't be applied to directory where namespace was created, let's create subdirectory
-	if err := os.Mkdir("root", 0o755); err != nil && !os.IsExist(err) {
-		return errors.WithStack(err)
-	}
-
 	// PivotRoot requires new root to be on different mountpoint, so let's bind it to itself
-	if err := syscall.Mount("root", "root", "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
+	if err := syscall.Mount(rootDir, rootDir, "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
 		return errors.WithStack(fmt.Errorf("binding new root to itself failed: %w", err))
 	}
 
 	// Let's assume that new filesystem is the current working dir even before pivoting to make life easier
-	return errors.WithStack(os.Chdir("root"))
+	return errors.WithStack(os.Chdir(rootDir))
 }
 
 func mountTmp() error {
