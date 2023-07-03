@@ -108,7 +108,7 @@ func runServer(ctx context.Context, config Config) error {
 }
 
 func prepareNewRoot() error {
-	// systemd remounts everything as MS_SHARED, to rpevent mess let's remount everything back to MS_PRIVATE inside namespace
+	// systemd remounts everything as MS_SHARED, to prevent mess let's remount everything back to MS_PRIVATE inside namespace
 	if err := syscall.Mount("", "/", "", syscall.MS_SLAVE|syscall.MS_REC, ""); err != nil {
 		return errors.WithStack(fmt.Errorf("remounting / as slave failed: %w", err))
 	}
