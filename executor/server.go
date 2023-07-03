@@ -15,7 +15,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/outofforest/isolator/initprocess"
-	"github.com/outofforest/isolator/lib/mount"
 	"github.com/outofforest/isolator/wire"
 )
 
@@ -45,11 +44,11 @@ func runServer(ctx context.Context, config Config, rootDir string) error {
 			}
 
 			if runtimeConfig.NoStandardMounts {
-				if err := mount.Proc(".proc"); err != nil {
+				if err := mountProc(".proc"); err != nil {
 					return err
 				}
 			} else {
-				if err := mount.Proc("proc"); err != nil {
+				if err := mountProc("proc"); err != nil {
 					return err
 				}
 				if err := mountTmp(); err != nil {
@@ -122,11 +121,23 @@ func prepareNewRoot(rootDir string) error {
 	return errors.WithStack(os.Chdir(rootDir))
 }
 
-func mountTmp() error {
-	if err := os.Mkdir("tmp", 0o777|os.ModeSticky); err != nil && !os.IsExist(err) {
+func mountProc(target string) error {
+	if err := os.Mkdir(target, 0o755); err != nil && !os.IsExist(err) {
 		return errors.WithStack(err)
 	}
-	if err := syscall.Mount("none", "tmp", "tmpfs", 0, ""); err != nil {
+	if err := syscall.Mount("none", target, "proc", 0, ""); err != nil {
+		return errors.WithStack(fmt.Errorf("mounting proc failed: %w", err))
+	}
+	return nil
+}
+
+func mountTmp() error {
+	const targetDir = "tmp"
+
+	if err := os.Mkdir(targetDir, 0o777|os.ModeSticky); err != nil && !os.IsExist(err) {
+		return errors.WithStack(err)
+	}
+	if err := syscall.Mount("none", targetDir, "tmpfs", 0, ""); err != nil {
 		return errors.WithStack(fmt.Errorf("mounting tmp failed: %w", err))
 	}
 	return nil
