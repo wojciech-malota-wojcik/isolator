@@ -140,8 +140,8 @@ func sanitizeConfig(config Config) (Config, error) {
 }
 
 func newExecutorServerCommand(config Config) *exec.Cmd {
-	cmd := exec.Command("/proc/self/exe", config.ExecutorArg)
-	cmd.Dir = config.Dir
+	cmd := exec.Command("/proc/self/exe", config.ExecutorArg, filepath.Base(config.Dir))
+	cmd.Dir = filepath.Dir(config.Dir)
 	cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/bin"}
 	cmd.SysProcAttr = &unix.SysProcAttr{
 		Pdeathsig:  unix.SIGKILL,

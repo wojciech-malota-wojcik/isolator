@@ -8,18 +8,21 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/outofforest/logger"
 	"github.com/outofforest/parallel"
+	"github.com/outofforest/run"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 
-	"github.com/outofforest/isolator/lib/chroot"
+	"github.com/outofforest/isolator/initprocess"
 	"github.com/outofforest/isolator/wire"
 )
 
-func runServer(ctx context.Context, config Config) error {
+func runServer(ctx context.Context, config Config, rootDir string) error {
 	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
 		spawn("watchdog", parallel.Fail, func(ctx context.Context) error {
 			<-ctx.Done()
-			// os.Stdin is used as input stream for client so it has to be closed to force client.Receive() to exit
+			// os.Stdin is used as input stream for client, so it has to be closed to force client.Receive() to exit
 			_ = os.Stdin.Close()
 			return errors.WithStack(ctx.Err())
 		})
@@ -36,19 +39,16 @@ func runServer(ctx context.Context, config Config) error {
 				return errors.Errorf("expected Config message but got: %T", content)
 			}
 
-			if runtimeConfig.Chroot {
-				exitChroot, err := chroot.Enter(".")
-				if err != nil {
-					return errors.WithStack(err)
+			if err := prepareNewRoot(rootDir); err != nil {
+				return errors.WithStack(fmt.Errorf("preparing new root filesystem failed: %w", err))
+			}
+
+			if runtimeConfig.NoStandardMounts {
+				if err := mountProc(".proc"); err != nil {
+					return err
 				}
-				defer func() {
-					_ = exitChroot()
-				}()
 			} else {
-				if err := prepareNewRoot(); err != nil {
-					return errors.WithStack(fmt.Errorf("preparing new root filesystem failed: %w", err))
-				}
-				if err := mountProc(); err != nil {
+				if err := mountProc("proc"); err != nil {
 					return err
 				}
 				if err := mountTmp(); err != nil {
@@ -57,85 +57,87 @@ func runServer(ctx context.Context, config Config) error {
 				if err := populateDev(); err != nil {
 					return err
 				}
-				if err := applyMounts(runtimeConfig.Mounts); err != nil {
-					return errors.WithStack(fmt.Errorf("mounting host directories failed: %w", err))
-				}
-
-				if err := pivotRoot(); err != nil {
-					return errors.WithStack(fmt.Errorf("pivoting root filesystem failed: %w", err))
-				}
-
 				if err := configureDNS(); err != nil {
 					return err
 				}
 			}
 
-			for {
-				content, err := decode()
-				if err != nil {
-					if ctx.Err() != nil || errors.Is(err, io.EOF) {
-						return ctx.Err()
-					}
-					return errors.WithStack(fmt.Errorf("receiving message failed: %w", err))
-				}
+			if err := applyMounts(runtimeConfig.Mounts); err != nil {
+				return errors.WithStack(fmt.Errorf("mounting host directories failed: %w", err))
+			}
 
-				handler, err := config.Router.Handler(content)
-				if err != nil {
-					return err
-				}
+			if err := pivotRoot(); err != nil {
+				return errors.WithStack(fmt.Errorf("pivoting root filesystem failed: %w", err))
+			}
 
-				var errStr string
-				if err := handler(ctx, content, encode); err != nil {
+			return run.WithFlavours(ctx, []run.FlavourFunc{
+				initprocess.Flavour,
+			}, func(ctx context.Context) error {
+				log := logger.Get(ctx)
+
+				for {
+					content, err := decode()
 					if err != nil {
+						if ctx.Err() != nil || errors.Is(err, io.EOF) {
+							return ctx.Err()
+						}
+						return errors.WithStack(fmt.Errorf("receiving message failed: %w", err))
+					}
+
+					handler, err := config.Router.Handler(content)
+					if err != nil {
+						return err
+					}
+
+					var errStr string
+					if err := handler(ctx, content, encode); err != nil {
+						log.Error("Command returned error", zap.Error(err))
 						errStr = err.Error()
 					}
+					if err := encode(wire.Result{
+						Error: errStr,
+					}); err != nil {
+						return errors.WithStack(fmt.Errorf("command status reporting failed: %w", err))
+					}
 				}
-				if err := encode(wire.Result{
-					Error: errStr,
-				}); err != nil {
-					return errors.WithStack(fmt.Errorf("command status reporting failed: %w", err))
-				}
-			}
+			})
 		})
 		return nil
 	})
 }
 
-func prepareNewRoot() error {
-	// systemd remounts everything as MS_SHARED, to rpevent mess let's remount everything back to MS_PRIVATE inside namespace
+func prepareNewRoot(rootDir string) error {
+	// systemd remounts everything as MS_SHARED, to prevent mess let's remount everything back to MS_PRIVATE inside namespace
 	if err := syscall.Mount("", "/", "", syscall.MS_SLAVE|syscall.MS_REC, ""); err != nil {
 		return errors.WithStack(fmt.Errorf("remounting / as slave failed: %w", err))
 	}
 
-	// PivotRoot can't be applied to directory where namespace was created, let's create subdirectory
-	if err := os.Mkdir("root", 0o755); err != nil && !os.IsExist(err) {
-		return errors.WithStack(err)
-	}
-
 	// PivotRoot requires new root to be on different mountpoint, so let's bind it to itself
-	if err := syscall.Mount("root", "root", "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
+	if err := syscall.Mount(rootDir, rootDir, "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
 		return errors.WithStack(fmt.Errorf("binding new root to itself failed: %w", err))
 	}
 
 	// Let's assume that new filesystem is the current working dir even before pivoting to make life easier
-	return errors.WithStack(os.Chdir("root"))
+	return errors.WithStack(os.Chdir(rootDir))
 }
 
-func mountProc() error {
-	if err := os.Mkdir("proc", 0o755); err != nil && !os.IsExist(err) {
+func mountProc(target string) error {
+	if err := os.Mkdir(target, 0o755); err != nil && !os.IsExist(err) {
 		return errors.WithStack(err)
 	}
-	if err := syscall.Mount("none", "proc", "proc", 0, ""); err != nil {
+	if err := syscall.Mount("none", target, "proc", 0, ""); err != nil {
 		return errors.WithStack(fmt.Errorf("mounting proc failed: %w", err))
 	}
 	return nil
 }
 
 func mountTmp() error {
-	if err := os.Mkdir("tmp", 0o777|os.ModeSticky); err != nil && !os.IsExist(err) {
+	const targetDir = "tmp"
+
+	if err := os.Mkdir(targetDir, 0o777|os.ModeSticky); err != nil && !os.IsExist(err) {
 		return errors.WithStack(err)
 	}
-	if err := syscall.Mount("none", "tmp", "tmpfs", 0, ""); err != nil {
+	if err := syscall.Mount("none", targetDir, "tmpfs", 0, ""); err != nil {
 		return errors.WithStack(fmt.Errorf("mounting tmp failed: %w", err))
 	}
 	return nil

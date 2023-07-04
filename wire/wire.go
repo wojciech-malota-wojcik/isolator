@@ -22,8 +22,8 @@ type Mount struct {
 
 // Config stores configuration of executor
 type Config struct {
-	// Chroot tells if chroot should be used instead of pivoting
-	Chroot bool
+	// NoStandardMounts tells to not mount standard mounts like /proc, /dev, /tmp ... inside new root.
+	NoStandardMounts bool
 
 	// Mounts is the list of bindings to apply inside container
 	Mounts []Mount
@@ -35,12 +35,15 @@ type Execute struct {
 	Command string
 }
 
-// InitFromDocker initializes filesystem by downloading and integrating docker image
-type InitFromDocker struct {
-	// Image is the name of the image
+// InflateDockerImage initializes filesystem by downloading and inflating docker image.
+type InflateDockerImage struct {
+	// Path were cached downloads are stored.
+	CacheDir string
+
+	// Image is the name of the image.
 	Image string
 
-	// Tag is the tag of the image
+	// Tag is the tag of the image.
 	Tag string
 }
 
