@@ -35,12 +35,15 @@ type Execute struct {
 	Command string
 }
 
-// InitFromDocker initializes filesystem by downloading and integrating docker image
-type InitFromDocker struct {
-	// Image is the name of the image
+// InflateDockerImage initializes filesystem by downloading and inflating docker image.
+type InflateDockerImage struct {
+	// Path were cached downloads are stored.
+	CacheDir string
+
+	// Image is the name of the image.
 	Image string
 
-	// Tag is the tag of the image
+	// Tag is the tag of the image.
 	Tag string
 }
 

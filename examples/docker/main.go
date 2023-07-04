@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"os"
+	"path/filepath"
 
 	"github.com/outofforest/parallel"
 	"github.com/outofforest/run"
 	"github.com/pkg/errors"
+	"github.com/ridge/must"
 
 	"github.com/outofforest/isolator"
 	"github.com/outofforest/isolator/executor"
@@ -17,49 +19,33 @@ func main() {
 	run.New().WithFlavour(executor.NewFlavour(executor.Config{
 		// Define commands recognized by the executor server.
 		Router: executor.NewRouter().
-			RegisterHandler(wire.Execute{}, executor.ExecuteHandler).
-			RegisterHandler(wire.InitFromDocker{}, executor.NewInitFromDockerHandler()),
+			RegisterHandler(wire.InflateDockerImage{}, executor.NewInflateDockerImageHandler()),
 	})).Run("example", func(ctx context.Context) error {
 		incoming := make(chan interface{})
 		outgoing := make(chan interface{})
 
-		rootDir := "/tmp/example"
-		mountedDir := "/tmp/mount"
+		rootDir := "/tmp/example-docker"
+		cacheDir := filepath.Join(must.String(os.UserCacheDir()), "docker-cache")
 
 		if err := os.MkdirAll(rootDir, 0o700); err != nil {
 			return errors.WithStack(err)
 		}
-		if err := os.MkdirAll(mountedDir, 0o700); err != nil {
+		if err := os.MkdirAll(cacheDir, 0o700); err != nil {
 			return errors.WithStack(err)
 		}
-
 		config := isolator.Config{
 			// Directory where container is created, filesystem of container should exist inside "root" directory there
 			Dir: rootDir,
 			Types: []interface{}{
 				wire.Result{},
-				wire.Log{},
 			},
 			Executor: wire.Config{
+				NoStandardMounts: true,
 				Mounts: []wire.Mount{
-					// Let's make host's /tmp/mount available inside container under /test
 					{
-						Host:      mountedDir,
-						Container: "/test",
+						Host:      cacheDir,
+						Container: "/.cache",
 						Writable:  true,
-					},
-					// To be able to execute /bin/sh
-					{
-						Host:      "/bin",
-						Container: "/bin",
-					},
-					{
-						Host:      "/lib",
-						Container: "/lib",
-					},
-					{
-						Host:      "/lib64",
-						Container: "/lib64",
 					},
 				},
 			},
@@ -81,7 +67,11 @@ func main() {
 				select {
 				case <-ctx.Done():
 					return errors.WithStack(ctx.Err())
-				case outgoing <- wire.Execute{Command: `echo "Hello world!"`}:
+				case outgoing <- wire.InflateDockerImage{
+					CacheDir: "/.cache",
+					Image:    "grafana/grafana",
+					Tag:      "latest",
+				}:
 				}
 
 				// Communication channel loop

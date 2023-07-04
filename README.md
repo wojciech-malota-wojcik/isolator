@@ -9,7 +9,7 @@ functionality required in my other projects.
 
 ## How to use it
 
-Take a look at [example/main.go](example/main.go)
+Take a look at [examples](examples)
 
 ## Features
 

@@ -13,9 +13,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/outofforest/logger"
+	"github.com/outofforest/parallel"
 	"github.com/pkg/errors"
 	"github.com/ridge/must"
 	"go.uber.org/zap"
@@ -23,123 +25,545 @@ import (
 	"github.com/outofforest/isolator/lib/retry"
 )
 
-// Apply fetches image from docker registry and integrates it inside directory
-func Apply(ctx context.Context, c *http.Client, image, tag string) error {
+// InflateImage downloads and inflates docker image in the current directory.
+func InflateImage(ctx context.Context, c *http.Client, image, tag string, cacheDir string) error {
+	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
+		reactor := newTaskReactor()
+		imageClient := newImageClient(c, reactor, image, tag, cacheDir)
+
+		spawn("reactor", parallel.Fail, reactor.Run)
+		spawn("image", parallel.Exit, func(ctx context.Context) error {
+			return imageClient.Inflate(ctx)
+		})
+
+		return nil
+	})
+}
+
+// Task is the task to execute in the reactor.
+type Task struct {
+	ID string
+	Do func(ctx context.Context) error
+}
+
+type taskEnvelope struct {
+	T    Task
+	Ch   chan chan struct{}
+	Done chan<- Task
+}
+
+type taskReactor struct {
+	taskCh chan taskEnvelope
+}
+
+func newTaskReactor() *taskReactor {
+	return &taskReactor{
+		taskCh: make(chan taskEnvelope),
+	}
+}
+
+func (c *taskReactor) AwaitTasks(ctx context.Context, done chan<- Task, tasks ...Task) error {
+	type awaitedTask struct {
+		T       Task
+		AwaitCh chan struct{}
+	}
+
 	log := logger.Get(ctx)
+	awaits := make([]awaitedTask, 0, len(tasks))
 
-	var token string
-	if err := retry.Do(ctx, 10, 5*time.Second, func() error {
-		var err error
-		token, err = authorize(ctx, c, image)
-		return err
-	}); err != nil {
-		return err
-	}
-
-	var l []string
-	if err := retry.Do(ctx, 10, 5*time.Second, func() error {
-		var err error
-		l, err = layers(ctx, c, token, image, tag)
-		return err
-	}); err != nil {
-		return err
-	}
-	for _, digest := range l {
-		digest := digest
-		log.Info("Incrementing filesystem", zap.String("digest", digest))
-		if err := retry.Do(ctx, 10, 10*time.Second, func() error {
-			return increment(ctx, c, token, image, digest)
-		}); err != nil {
-			return err
+	for _, t := range tasks {
+		log.Info("Enqueueing task", zap.String("taskID", t.ID))
+		te := taskEnvelope{
+			T:    t,
+			Ch:   make(chan chan struct{}, 1),
+			Done: done,
+		}
+		select {
+		case <-ctx.Done():
+			return errors.WithStack(ctx.Err())
+		case c.taskCh <- te:
+			select {
+			case <-ctx.Done():
+				return errors.WithStack(ctx.Err())
+			case awaitCh := <-te.Ch:
+				awaits = append(awaits, awaitedTask{
+					T:       te.T,
+					AwaitCh: awaitCh,
+				})
+			}
 		}
 	}
+
+	for _, await := range awaits {
+		log.Info("Awaiting task", zap.String("taskID", await.T.ID), zap.Int("taskCount", len(awaits)))
+
+		select {
+		case <-ctx.Done():
+			return errors.WithStack(ctx.Err())
+		case <-await.AwaitCh:
+		}
+
+		log.Info("Task completed", zap.String("taskID", await.T.ID))
+	}
+
 	return nil
 }
 
-func authorize(ctx context.Context, c *http.Client, imageName string) (string, error) {
-	resp, err := c.Do(must.HTTPRequest(http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/%s:pull", imageName), nil)))
-	if err != nil {
-		return "", retry.Retryable(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", retry.Retryable(errors.Errorf("unexpected response status: %d", resp.StatusCode))
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", retry.Retryable(err)
-	}
+func (c *taskReactor) Run(ctx context.Context) error {
+	const workers = 5
 
-	data := struct {
-		Token       string `json:"token"`
-		AccessToken string `json:"access_token"` //nolint:tagliatelle
-	}{}
-	if err := json.Unmarshal(body, &data); err != nil {
-		return "", retry.Retryable(err)
-	}
-	if data.Token != "" {
-		return data.Token, nil
-	}
-	if data.AccessToken != "" {
-		return data.AccessToken, nil
-	}
-	return "", retry.Retryable(errors.New("no token in response"))
+	log := logger.Get(ctx)
+	log.Info("Task reactor started")
+	defer log.Info("Task reactor terminated")
+
+	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
+		requestedTaskCh := make(chan taskEnvelope)
+		completedTaskCh := make(chan taskEnvelope)
+
+		spawn("supervisor", parallel.Fail, func(ctx context.Context) error {
+			activeTasks := map[string]chan struct{}{}
+
+			doneFunc := func(ctx context.Context, te taskEnvelope) {
+				ch := activeTasks[te.T.ID]
+				delete(activeTasks, te.T.ID)
+				close(ch)
+
+				if te.Done != nil {
+					select {
+					case <-ctx.Done():
+					case te.Done <- te.T:
+					}
+				}
+			}
+
+			for {
+				select {
+				case <-ctx.Done():
+					return errors.WithStack(ctx.Err())
+				case te := <-c.taskCh:
+					awaitCh, exists := activeTasks[te.T.ID]
+					if !exists {
+						awaitCh = make(chan struct{})
+						activeTasks[te.T.ID] = awaitCh
+					}
+
+					select {
+					case <-ctx.Done():
+						return errors.WithStack(ctx.Err())
+					case te.Ch <- awaitCh:
+					}
+
+					for {
+						select {
+						case <-ctx.Done():
+							return errors.WithStack(ctx.Err())
+						case requestedTaskCh <- te:
+						case te := <-completedTaskCh:
+							doneFunc(ctx, te)
+							continue
+						}
+						break
+					}
+				case te := <-completedTaskCh:
+					doneFunc(ctx, te)
+				}
+			}
+		})
+
+		for i := 0; i < workers; i++ {
+			spawn(fmt.Sprintf("worker-%d", i), parallel.Fail, func(ctx context.Context) error {
+				for {
+					var te taskEnvelope
+					select {
+					case <-ctx.Done():
+						return errors.WithStack(ctx.Err())
+					case te = <-requestedTaskCh:
+					}
+
+					if err := te.T.Do(ctx); err != nil {
+						return errors.WithStack(err)
+					}
+
+					select {
+					case <-ctx.Done():
+						return errors.WithStack(ctx.Err())
+					case completedTaskCh <- te:
+					}
+				}
+			})
+		}
+
+		return nil
+	})
 }
 
-func layers(ctx context.Context, c *http.Client, token string, image, tag string) ([]string, error) {
-	req := must.HTTPRequest(http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("https://registry-1.docker.io/v2/library/%s/manifests/%s", image, tag), nil))
-	req.Header.Add("Accept", "application/vnd.docker.distribution.manifest.v2+json")
-	req.Header.Add("Authorization", "Bearer "+token)
-	resp, err := c.Do(req)
-	if err != nil {
-		return nil, retry.Retryable(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, retry.Retryable(errors.Errorf("unexpected response status: %d", resp.StatusCode))
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, retry.Retryable(errors.WithStack(err))
-	}
-
-	data := struct {
-		Layers []struct {
-			Digest string `json:"digest"`
-		} `json:"layers"`
-	}{}
-
-	if err := json.Unmarshal(body, &data); err != nil {
-		return nil, retry.Retryable(err)
-	}
-
-	layers := make([]string, 0, len(data.Layers))
-	for _, l := range data.Layers {
-		layers = append(layers, l.Digest)
-	}
-	return layers, nil
+type manifest struct {
+	Config struct {
+		Digest string `json:"digest"`
+	} `json:"config"`
+	Layers []struct {
+		Digest string `json:"digest"`
+	} `json:"layers"`
 }
 
-func increment(ctx context.Context, c *http.Client, token, imageName, digest string) error {
-	req := must.HTTPRequest(http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("https://registry-1.docker.io/v2/library/%s/blobs/%s", imageName, digest), nil))
-	req.Header.Add("Authorization", "Bearer "+token)
-	resp, err := c.Do(req)
-	if err != nil {
-		return retry.Retryable(err)
+type imageClient struct {
+	c        *http.Client
+	reactor  *taskReactor
+	image    string
+	tag      string
+	cacheDir string
+
+	mu        sync.Mutex
+	authToken string
+}
+
+func newImageClient(
+	c *http.Client,
+	reactor *taskReactor,
+	image, tag string,
+	cacheDir string,
+) *imageClient {
+	if !strings.Contains(image, "/") {
+		image = "library/" + image
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return retry.Retryable(errors.Errorf("unexpected response status: %d", resp.StatusCode))
+	return &imageClient{
+		c:        c,
+		reactor:  reactor,
+		image:    image,
+		tag:      tag,
+		cacheDir: cacheDir,
+	}
+}
+
+func (c *imageClient) Inflate(ctx context.Context) error {
+	ctx = logger.With(ctx,
+		zap.String("image", c.image+":"+c.tag),
+	)
+	log := logger.Get(ctx)
+	log.Info("Docker image requested")
+
+	manifestPath := filepath.Join(c.cacheDir, fmt.Sprintf("%s:%s.json", strings.ReplaceAll(c.image, "/", ":"), c.tag))
+
+	err := c.reactor.AwaitTasks(ctx, nil, Task{
+		ID: fmt.Sprintf("docker:manifestRaw:%s:%s", c.image, c.tag),
+		Do: func(ctx context.Context) error {
+			return c.fetchManifest(ctx, manifestPath)
+		},
+	})
+	if err != nil {
+		return err
 	}
 
-	hasher := sha256.New()
-	gr, err := gzip.NewReader(io.TeeReader(resp.Body, hasher))
+	manifestRaw, err := os.ReadFile(manifestPath)
 	if err != nil {
-		return retry.Retryable(errors.WithStack(err))
+		return errors.WithStack(err)
 	}
-	defer gr.Close()
 
-	tr := tar.NewReader(gr)
+	var manifest manifest
+	if err := json.Unmarshal(manifestRaw, &manifest); err != nil {
+		return errors.WithStack(err)
+	}
+
+	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
+		layerTasks := make([]Task, 0, len(manifest.Layers))
+		for _, l := range manifest.Layers {
+			l := l
+			layerTasks = append(layerTasks, Task{
+				ID: fmt.Sprintf("docker:blob:%s", l.Digest),
+				Do: func(ctx context.Context) error {
+					return c.fetchBlob(ctx, l.Digest, filepath.Join(c.cacheDir, l.Digest+".tgz"))
+				},
+			})
+		}
+
+		doneCh := make(chan Task)
+		spawn("tasks", parallel.Continue, func(ctx context.Context) error {
+			log.Info("Fetching blobs")
+
+			if err := c.reactor.AwaitTasks(ctx, doneCh, layerTasks...); err != nil {
+				return err
+			}
+
+			log.Info("Blobs fetched")
+
+			return nil
+		})
+		spawn("inflate", parallel.Exit, func(ctx context.Context) error {
+			layers := manifest.Layers
+			tasks := layerTasks
+			completed := map[string]Task{}
+
+			for {
+				var t Task
+				select {
+				case <-ctx.Done():
+					return errors.WithStack(ctx.Err())
+				case t = <-doneCh:
+				}
+
+				completed[t.ID] = t
+
+				for {
+					if _, exists := completed[tasks[0].ID]; !exists {
+						break
+					}
+
+					l := layers[0]
+
+					blobFile := filepath.Join(c.cacheDir, l.Digest+".tgz")
+					log.Info("Inflating blob", zap.String("blobFile", blobFile))
+
+					f, err := os.Open(blobFile)
+					if err != nil {
+						return errors.WithStack(err)
+					}
+					defer f.Close()
+
+					hasher := sha256.New()
+					gr, err := gzip.NewReader(io.TeeReader(f, hasher))
+					if err != nil {
+						return errors.WithStack(err)
+					}
+					defer gr.Close()
+
+					if err := untar(gr); err != nil {
+						return err
+					}
+
+					computedDigest := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
+					if computedDigest != l.Digest {
+						return errors.Errorf("blob digest doesn't match, expected: %s, got: %s", l.Digest, computedDigest)
+					}
+
+					log.Info("Blob inflated", zap.String("blobFile", blobFile))
+
+					if len(layers) == 1 {
+						return nil
+					}
+
+					layers = layers[1:]
+					tasks = tasks[1:]
+				}
+			}
+		})
+
+		return nil
+	})
+}
+
+func (c *imageClient) authorize(ctx context.Context, currentAuthToken string) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if currentAuthToken != c.authToken {
+		return c.authToken, nil
+	}
+
+	err := retry.Do(ctx, retry.FixedConfig{RetryAfter: 5 * time.Second}, func() error {
+		resp, err := c.c.Do(must.HTTPRequest(http.NewRequestWithContext(
+			ctx,
+			http.MethodGet,
+			fmt.Sprintf("https://auth.docker.io/token?service=registry.docker.io&scope=repository:%s:pull", c.image),
+			nil,
+		)))
+		if err != nil {
+			return retry.Retriable(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return retry.Retriable(errors.Errorf("unexpected response status: %d", resp.StatusCode))
+		}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return retry.Retriable(err)
+		}
+
+		data := struct {
+			Token       string `json:"token"`
+			AccessToken string `json:"access_token"` //nolint:tagliatelle
+		}{}
+		if err := json.Unmarshal(body, &data); err != nil {
+			return retry.Retriable(err)
+		}
+		if data.Token != "" {
+			c.authToken = data.Token
+			return nil
+		}
+		if data.AccessToken != "" {
+			c.authToken = data.AccessToken
+			return nil
+		}
+		return retry.Retriable(errors.New("no token in response"))
+	})
+	if err != nil {
+		return "", err
+	}
+	return c.authToken, nil
+}
+
+func (c *imageClient) fetchManifest(ctx context.Context, dstFile string) (retErr error) {
+	manifestURL := fmt.Sprintf("https://registry-1.docker.io/v2/%s/manifests/%s", c.image, c.tag)
+
+	ctx = logger.With(ctx, zap.String("manifestURL", manifestURL), zap.String("dstPath", dstFile))
+	log := logger.Get(ctx)
+	log.Info("Fetching manifest")
+
+	defer func() {
+		if retErr == nil {
+			log.Info("Manifest fetched")
+		} else {
+			_ = os.Remove(dstFile)
+		}
+	}()
+
+	if err := os.MkdirAll(filepath.Dir(dstFile), 0o700); err != nil {
+		return errors.WithStack(err)
+	}
+
+	f, err := os.OpenFile(dstFile, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	defer f.Close()
+
+	var authToken string
+	return retry.Do(ctx, retry.FixedConfig{RetryAfter: 5 * time.Second}, func() error {
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return errors.WithStack(err)
+		}
+		if err := f.Truncate(0); err != nil {
+			return errors.WithStack(err)
+		}
+
+		var err error
+		authToken, err = c.authorize(ctx, authToken)
+		if err != nil {
+			return err
+		}
+
+		req := must.HTTPRequest(http.NewRequestWithContext(
+			ctx,
+			http.MethodGet,
+			manifestURL,
+			nil,
+		))
+		req.Header.Add("Accept", "application/vnd.docker.distribution.manifest.v2+json")
+		req.Header.Add("Authorization", "Bearer "+authToken)
+
+		resp, err := c.c.Do(req)
+		if err != nil {
+			return retry.Retriable(err)
+		}
+		defer resp.Body.Close()
+
+		switch resp.StatusCode {
+		case http.StatusUnauthorized:
+			authToken = ""
+			return retry.Retriable(errors.New("authorization required"))
+		case http.StatusOK:
+		default:
+			return retry.Retriable(errors.Errorf("unexpected response status: %d", resp.StatusCode))
+		}
+
+		_, err = io.Copy(f, resp.Body)
+		if err != nil {
+			return retry.Retriable(errors.WithStack(err))
+		}
+
+		return nil
+	})
+}
+
+func (c *imageClient) fetchBlob(ctx context.Context, digest, dstFile string) (retErr error) {
+	blobURL := fmt.Sprintf("https://registry-1.docker.io/v2/%s/blobs/%s", c.image, digest)
+
+	ctx = logger.With(ctx, zap.String("blobURL", blobURL), zap.String("dstPath", dstFile))
+	log := logger.Get(ctx)
+	log.Info("Fetching blob")
+
+	defer func() {
+		if retErr == nil {
+			log.Info("Blob fetched")
+		} else {
+			_ = os.Remove(dstFile)
+		}
+	}()
+
+	if err := os.MkdirAll(filepath.Dir(dstFile), 0o700); err != nil {
+		return errors.WithStack(err)
+	}
+
+	f, err := os.OpenFile(dstFile, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	defer f.Close()
+
+	var authToken string
+	return retry.Do(ctx, retry.FixedConfig{RetryAfter: 5 * time.Second}, func() error {
+		if _, err := f.Seek(0, io.SeekStart); err != nil {
+			return errors.WithStack(err)
+		}
+		if err := f.Truncate(0); err != nil {
+			return errors.WithStack(err)
+		}
+
+		var err error
+		authToken, err = c.authorize(ctx, authToken)
+		if err != nil {
+			return err
+		}
+
+		req := must.HTTPRequest(http.NewRequestWithContext(
+			ctx,
+			http.MethodGet,
+			blobURL,
+			nil,
+		))
+		req.Header.Add("Authorization", "Bearer "+authToken)
+
+		resp, err := c.c.Do(req)
+		if err != nil {
+			return retry.Retriable(err)
+		}
+		defer resp.Body.Close()
+
+		switch resp.StatusCode {
+		case http.StatusUnauthorized:
+			authToken = ""
+			return retry.Retriable(errors.New("authorization required"))
+		case http.StatusOK:
+		default:
+			return retry.Retriable(errors.Errorf("unexpected response status: %d", resp.StatusCode))
+		}
+
+		hasher := sha256.New()
+		r := io.TeeReader(resp.Body, hasher)
+		_, err = io.Copy(f, r)
+		if err != nil {
+			return retry.Retriable(errors.WithStack(err))
+		}
+
+		computedDigest := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
+		if computedDigest != digest {
+			if err := os.Remove(dstFile); err != nil {
+				return errors.WithStack(err)
+			}
+			return retry.Retriable(errors.Errorf("digest doesn't match, expected: %s, got: %s", digest, computedDigest))
+		}
+
+		return nil
+	})
+}
+
+func untar(r io.Reader) error {
+	tr := tar.NewReader(r)
 	del := map[string]bool{}
 	added := map[string]bool{}
 loop:
@@ -149,7 +573,7 @@ loop:
 		case err == io.EOF:
 			break loop
 		case err != nil:
-			return retry.Retryable(err)
+			return retry.Retriable(err)
 		case header == nil:
 			continue
 		}
@@ -247,11 +671,6 @@ loop:
 				return errors.WithStack(err)
 			}
 		}
-	}
-
-	computedDigest := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
-	if computedDigest != digest {
-		return retry.Retryable(errors.Errorf("digest doesn't match, expected: %s, got: %s", digest, computedDigest))
 	}
 	return nil
 }

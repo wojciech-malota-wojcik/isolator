@@ -13,17 +13,17 @@ import (
 	"github.com/outofforest/isolator/wire"
 )
 
-// NewInitFromDockerHandler creates new standard handler for InitFromDocker command.
-func NewInitFromDockerHandler() HandlerFunc {
+// NewInflateDockerImageHandler creates new standard handler for InflateDockerImage command.
+func NewInflateDockerImageHandler() HandlerFunc {
 	// creating http client before pivoting/chrooting because client reads CA certificates from system pool
 	httpClient := libhttp.NewSelfClient()
 
 	return func(ctx context.Context, content interface{}, encode wire.EncoderFunc) error {
-		m, ok := content.(wire.InitFromDocker)
+		m, ok := content.(wire.InflateDockerImage)
 		if !ok {
 			return errors.Errorf("unexpected type %T", content)
 		}
-		return docker.Apply(ctx, httpClient, m.Image, m.Tag)
+		return docker.InflateImage(ctx, httpClient, m.Image, m.Tag, m.CacheDir)
 	}
 }
 
