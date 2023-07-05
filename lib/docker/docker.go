@@ -281,10 +281,11 @@ func (c *imageClient) Inflate(ctx context.Context) error {
 		}
 	}
 
+	// FIXME (wojciech): Download this in parallel with layers
 	err = c.reactor.AwaitTasks(ctx, nil, Task{
-		ID: fmt.Sprintf("docker:config:%s:%s", c.image, c.tag),
+		ID: fmt.Sprintf("docker:config:%s:%s", c.image, manifest.Config.Digest),
 		Do: func(ctx context.Context) error {
-			return c.fetchBlob(ctx, manifest.Config.Digest, filepath.Join(c.cacheDir, fmt.Sprintf("%s:%s:config.json", fileName, c.tag)))
+			return c.fetchBlob(ctx, manifest.Config.Digest, filepath.Join(c.cacheDir, fmt.Sprintf("%s:%s:config.json", fileName, manifest.Config.Digest)))
 		},
 	})
 	if err != nil {
