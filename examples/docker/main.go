@@ -70,7 +70,7 @@ func main() {
 				case outgoing <- wire.InflateDockerImage{
 					CacheDir: "/.cache",
 					Image:    "grafana/grafana",
-					Tag:      "latest",
+					Tag:      "sha256:1caf984a3f2e07ea4f5ffd25c16fad0ed0ddac043467e8b9ddaf4cbbc6299ec4",
 				}:
 				}
 
