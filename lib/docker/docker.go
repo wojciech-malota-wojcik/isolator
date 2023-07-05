@@ -291,17 +291,6 @@ func (c *imageClient) Inflate(ctx context.Context) error {
 		return errors.Errorf("unsupprted media type %s for config", manifest.Config.MediaType)
 	}
 
-	// FIXME (wojciech): Download this in parallel with layers
-	err = c.reactor.AwaitTasks(ctx, nil, Task{
-		ID: fmt.Sprintf("docker:config:%s:%s", c.image, manifest.Config.Digest),
-		Do: func(ctx context.Context) error {
-			return c.fetchBlob(ctx, manifest.Config.Digest, filepath.Join(c.cacheDir, fmt.Sprintf("%s:%s:config.json", fileName, manifest.Config.Digest)))
-		},
-	})
-	if err != nil {
-		return err
-	}
-
 	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
 		layerTasks := make([]Task, 0, len(manifest.Layers))
 		for _, l := range manifest.Layers {
@@ -323,7 +312,14 @@ func (c *imageClient) Inflate(ctx context.Context) error {
 		spawn("tasks", parallel.Continue, func(ctx context.Context) error {
 			log.Info("Fetching blobs")
 
-			if err := c.reactor.AwaitTasks(ctx, doneCh, layerTasks...); err != nil {
+			if err := c.reactor.AwaitTasks(ctx, doneCh, append([]Task{
+				{
+					ID: fmt.Sprintf("docker:config:%s:%s", c.image, manifest.Config.Digest),
+					Do: func(ctx context.Context) error {
+						return c.fetchBlob(ctx, manifest.Config.Digest, filepath.Join(c.cacheDir, fmt.Sprintf("%s:%s:config.json", fileName, manifest.Config.Digest)))
+					},
+				},
+			}, layerTasks...)...); err != nil {
 				return err
 			}
 
@@ -342,6 +338,10 @@ func (c *imageClient) Inflate(ctx context.Context) error {
 				case <-ctx.Done():
 					return errors.WithStack(ctx.Err())
 				case t = <-doneCh:
+				}
+
+				if strings.HasPrefix(t.ID, "docker:config:") {
+					continue
 				}
 
 				completed[t.ID] = t
