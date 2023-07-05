@@ -1,48 +1,67 @@
 package isolator
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"syscall"
 
-	"github.com/outofforest/libexec"
+	"github.com/outofforest/logger"
 	"github.com/outofforest/parallel"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 	"golang.org/x/sys/unix"
 
 	"github.com/outofforest/isolator/executor"
 	"github.com/outofforest/isolator/wire"
 )
 
-const capSysAdmin = 21
+// ClientFunc defines the client function for isolator.
+type ClientFunc func(ctx context.Context, incoming <-chan interface{}, outgoing chan<- interface{}) error
 
 // Run runs executor server and communication channel.
-func Run(ctx context.Context, config Config) error {
+func Run(ctx context.Context, config Config, clientFunc ClientFunc) error {
 	config, err := sanitizeConfig(config)
 	if err != nil {
 		return err
 	}
 
-	outPipe := newPipe()
-	inPipe := newPipe()
-
 	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
 		startCh := make(chan struct{})
 
+		outPipe := newPipe()
+		inPipe := newPipe()
+
+		incoming := make(chan interface{})
+		outgoing := make(chan interface{})
+
 		spawn("server", parallel.Fail, func(ctx context.Context) error {
+			defer func() {
+				_ = outPipe.Close()
+				_ = inPipe.Close()
+			}()
+
 			select {
 			case <-ctx.Done():
-				return errors.WithStack(err)
+				return errors.WithStack(ctx.Err())
 			case <-startCh:
+			}
+
+			if err := os.MkdirAll(config.Dir, 0o700); err != nil {
+				return errors.WithStack(err)
 			}
 
 			cmd := newExecutorServerCommand(config)
 			cmd.Stdout = outPipe
 			cmd.Stdin = inPipe
 
-			return libexec.Exec(ctx, cmd)
+			// cmd.Wait() called inside libexec does not return until stdin, stdout and stderr are fully processed,
+			// that's why cmd.Process.Wait is used inside the implementation below. Otherwise, cmd never exits.
+			return execServer(ctx, cmd)
 		})
 		spawn("watchdog", parallel.Fail, func(ctx context.Context) error {
 			<-ctx.Done()
@@ -54,7 +73,7 @@ func Run(ctx context.Context, config Config) error {
 
 			return errors.WithStack(ctx.Err())
 		})
-		spawn("client", parallel.Fail, func(ctx context.Context) error {
+		spawn("communication", parallel.Fail, func(ctx context.Context) error {
 			return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
 				spawn("sender", parallel.Fail, func(ctx context.Context) error {
 					encode := wire.NewEncoder(inPipe)
@@ -66,7 +85,7 @@ func Run(ctx context.Context, config Config) error {
 						select {
 						case <-ctx.Done():
 							return errors.WithStack(ctx.Err())
-						case content, ok = <-config.Outgoing:
+						case content, ok = <-outgoing:
 						}
 
 						if !ok {
@@ -97,7 +116,7 @@ func Run(ctx context.Context, config Config) error {
 					}
 				})
 				spawn("receiver", parallel.Fail, func(ctx context.Context) error {
-					defer close(config.Incoming)
+					defer close(incoming)
 
 					decode := wire.NewDecoder(outPipe, config.Types)
 					for {
@@ -112,13 +131,16 @@ func Run(ctx context.Context, config Config) error {
 						select {
 						case <-ctx.Done():
 							return errors.WithStack(ctx.Err())
-						case config.Incoming <- content:
+						case incoming <- content:
 						}
 					}
 				})
 
 				return nil
 			})
+		})
+		spawn("client", parallel.Exit, func(ctx context.Context) error {
+			return clientFunc(ctx, incoming, outgoing)
 		})
 
 		return nil
@@ -146,8 +168,9 @@ func newExecutorServerCommand(config Config) *exec.Cmd {
 	cmd.SysProcAttr = &unix.SysProcAttr{
 		Pdeathsig:  unix.SIGKILL,
 		Cloneflags: unix.CLONE_NEWPID | unix.CLONE_NEWNS | unix.CLONE_NEWUSER | unix.CLONE_NEWIPC | unix.CLONE_NEWUTS | unix.CLONE_NEWCGROUP,
-		// by adding CAP_SYS_ADMIN executor may mount /proc
-		AmbientCaps: []uintptr{capSysAdmin},
+		AmbientCaps: []uintptr{
+			unix.CAP_SYS_ADMIN, // by adding CAP_SYS_ADMIN executor may mount /proc
+		},
 		UidMappings: []syscall.SysProcIDMap{
 			{
 				HostID:      0,
@@ -235,4 +258,62 @@ func (p *pipe) Close() error {
 		close(p.closed)
 	}
 	return nil
+}
+
+func execServer(ctx context.Context, cmds ...*exec.Cmd) error {
+	for _, cmd := range cmds {
+		cmd := cmd
+		if cmd.Stdout == nil {
+			cmd.Stdout = os.Stdout
+		}
+		if cmd.Stderr == nil {
+			cmd.Stderr = os.Stderr
+		}
+		if cmd.Stdin == nil {
+			// If Stdin is nil, then exec library tries to assign it to /dev/null
+			// Null device does not exist in chrooted environment unless created, so we set a fake nil buffer
+			// just to remove this dependency
+			cmd.Stdin = bytes.NewReader(nil)
+		}
+
+		logger.Get(ctx).Debug("Executing command", zap.Stringer("command", cmd))
+
+		if err := cmd.Start(); err != nil {
+			return errors.WithStack(err)
+		}
+
+		err := parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
+			spawn("cmd", parallel.Exit, func(ctx context.Context) error {
+				_, err := cmd.Process.Wait()
+				if ctx.Err() != nil {
+					return errors.WithStack(ctx.Err())
+				}
+				if err != nil {
+					return errors.WithStack(cmdError{Err: err, Debug: cmd.String()})
+				}
+				return nil
+			})
+			spawn("ctx", parallel.Fail, func(ctx context.Context) error {
+				<-ctx.Done()
+				_ = cmd.Process.Signal(syscall.SIGTERM)
+				_ = cmd.Process.Signal(syscall.SIGINT)
+				return errors.WithStack(ctx.Err())
+			})
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type cmdError struct {
+	Err   error
+	Debug string
+}
+
+// Error returns the string representation of an Error.
+func (e cmdError) Error() string {
+	return fmt.Sprintf("%s: %q", e.Err, e.Debug)
 }

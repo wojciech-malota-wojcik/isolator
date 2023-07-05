@@ -3,6 +3,7 @@ package wire
 import (
 	"encoding/json"
 	"io"
+	"os"
 	"reflect"
 
 	"github.com/pkg/errors"
@@ -22,8 +23,8 @@ type Mount struct {
 
 // Config stores configuration of executor
 type Config struct {
-	// NoStandardMounts tells to not mount standard mounts like /proc, /dev, /tmp ... inside new root.
-	NoStandardMounts bool
+	// ConfigureSystem tells executor to mount standard mounts like /proc, /dev, /tmp ...  and configure DNS inside new root.
+	ConfigureSystem bool
 
 	// Mounts is the list of bindings to apply inside container
 	Mounts []Mount
@@ -45,6 +46,36 @@ type InflateDockerImage struct {
 
 	// Tag is the tag of the image.
 	Tag string
+}
+
+// RunDockerContainer runs docker container.
+type RunDockerContainer struct {
+	// Path were cached downloads are stored.
+	CacheDir string
+
+	// Name is the name of the container.
+	Name string
+
+	// Image is the name of the image.
+	Image string
+
+	// Tag is the tag of the image.
+	Tag string
+
+	// EnvVars sets environment variables inside container.
+	EnvVars map[string]string
+
+	// User is the username or UID and group name or GID to use.
+	User string
+
+	// WorkingDir is the path to wrking drectory inside the container.
+	WorkingDir string
+
+	// Entrypoint for container.
+	Entrypoint []string
+
+	// Args is a list of arguments for the container.
+	Args []string
 }
 
 // Result is sent once command finishes
@@ -138,4 +169,18 @@ func typesToMap(types []interface{}) map[string]interface{} {
 		res[ContentToType(t)] = t
 	}
 	return res
+}
+
+// ToStream converts stream value to stdin or stderr.
+func ToStream(stream Stream) (*os.File, error) {
+	var f *os.File
+	switch stream {
+	case StreamOut:
+		f = os.Stdout
+	case StreamErr:
+		f = os.Stderr
+	default:
+		return nil, errors.Errorf("unknown stream: %d", stream)
+	}
+	return f, nil
 }
