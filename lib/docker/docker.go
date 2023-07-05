@@ -243,10 +243,11 @@ func (c *imageClient) Inflate(ctx context.Context) error {
 	log := logger.Get(ctx)
 	log.Info("Docker image requested")
 
-	manifestPath := filepath.Join(c.cacheDir, fmt.Sprintf("%s:%s.json", strings.ReplaceAll(c.image, "/", ":"), c.tag))
+	fileName := strings.ReplaceAll(c.image, "/", ":")
+	manifestPath := filepath.Join(c.cacheDir, fmt.Sprintf("%s:%s:manifest.json", fileName, c.tag))
 
 	err := c.reactor.AwaitTasks(ctx, nil, Task{
-		ID: fmt.Sprintf("docker:manifestRaw:%s:%s", c.image, c.tag),
+		ID: fmt.Sprintf("docker:manifest:%s:%s", c.image, c.tag),
 		Do: func(ctx context.Context) error {
 			return c.fetchManifest(ctx, manifestPath)
 		},
@@ -278,6 +279,16 @@ func (c *imageClient) Inflate(ctx context.Context) error {
 		if computedDigest != c.tag {
 			return retry.Retriable(errors.Errorf("manifest digest doesn't match, expected: %s, got: %s", c.tag, computedDigest))
 		}
+	}
+
+	err = c.reactor.AwaitTasks(ctx, nil, Task{
+		ID: fmt.Sprintf("docker:config:%s:%s", c.image, c.tag),
+		Do: func(ctx context.Context) error {
+			return c.fetchBlob(ctx, manifest.Config.Digest, filepath.Join(c.cacheDir, fmt.Sprintf("%s:%s:config.json", fileName, c.tag)))
+		},
+	})
+	if err != nil {
+		return err
 	}
 
 	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
