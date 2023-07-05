@@ -199,11 +199,14 @@ func (c *taskReactor) Run(ctx context.Context) error {
 }
 
 type manifest struct {
-	Config struct {
-		Digest string `json:"digest"`
+	MediaType string `json:"mediaType"`
+	Config    struct {
+		MediaType string `json:"mediaType"`
+		Digest    string `json:"digest"`
 	} `json:"config"`
 	Layers []struct {
-		Digest string `json:"digest"`
+		MediaType string `json:"mediaType"`
+		Digest    string `json:"digest"`
 	} `json:"layers"`
 }
 
@@ -281,6 +284,13 @@ func (c *imageClient) Inflate(ctx context.Context) error {
 		}
 	}
 
+	if manifest.MediaType != "application/vnd.docker.distribution.manifest.v2+json" {
+		return errors.Errorf("unsupprted media type %s for manifest", manifest.MediaType)
+	}
+	if manifest.Config.MediaType != "application/vnd.docker.container.image.v1+json" {
+		return errors.Errorf("unsupprted media type %s for config", manifest.Config.MediaType)
+	}
+
 	// FIXME (wojciech): Download this in parallel with layers
 	err = c.reactor.AwaitTasks(ctx, nil, Task{
 		ID: fmt.Sprintf("docker:config:%s:%s", c.image, manifest.Config.Digest),
@@ -296,6 +306,11 @@ func (c *imageClient) Inflate(ctx context.Context) error {
 		layerTasks := make([]Task, 0, len(manifest.Layers))
 		for _, l := range manifest.Layers {
 			l := l
+
+			if l.MediaType != "application/vnd.docker.image.rootfs.diff.tar.gzip" {
+				return errors.Errorf("unsupprted media type %s for layer", l.MediaType)
+			}
+
 			layerTasks = append(layerTasks, Task{
 				ID: fmt.Sprintf("docker:blob:%s", l.Digest),
 				Do: func(ctx context.Context) error {
