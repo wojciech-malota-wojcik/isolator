@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
 	"os"
@@ -254,14 +255,29 @@ func (c *imageClient) Inflate(ctx context.Context) error {
 		return err
 	}
 
-	manifestRaw, err := os.ReadFile(manifestPath)
+	f, err := os.Open(manifestPath)
 	if err != nil {
 		return errors.WithStack(err)
 	}
+	defer f.Close()
+
+	var r io.Reader = f
+	var hasher hash.Hash
+	if strings.HasPrefix(c.tag, "sha256:") {
+		hasher = sha256.New()
+		r = io.TeeReader(r, hasher)
+	}
 
 	var manifest manifest
-	if err := json.Unmarshal(manifestRaw, &manifest); err != nil {
+	if err := json.NewDecoder(r).Decode(&manifest); err != nil {
 		return errors.WithStack(err)
+	}
+
+	if hasher != nil {
+		computedDigest := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
+		if computedDigest != c.tag {
+			return retry.Retriable(errors.Errorf("manifest digest doesn't match, expected: %s, got: %s", c.tag, computedDigest))
+		}
 	}
 
 	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
@@ -468,9 +484,26 @@ func (c *imageClient) fetchManifest(ctx context.Context, dstFile string) (retErr
 			return retry.Retriable(errors.Errorf("unexpected response status: %d", resp.StatusCode))
 		}
 
-		_, err = io.Copy(f, resp.Body)
+		var r io.Reader = resp.Body
+		var hasher hash.Hash
+		if strings.HasPrefix(c.tag, "sha256:") {
+			hasher = sha256.New()
+			r = io.TeeReader(r, hasher)
+		}
+
+		_, err = io.Copy(f, r)
 		if err != nil {
 			return retry.Retriable(errors.WithStack(err))
+		}
+
+		if hasher != nil {
+			computedDigest := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
+			if computedDigest != c.tag {
+				if err := os.Remove(dstFile); err != nil {
+					return errors.WithStack(err)
+				}
+				return retry.Retriable(errors.Errorf("digest doesn't match, expected: %s, got: %s", c.tag, computedDigest))
+			}
 		}
 
 		return nil
