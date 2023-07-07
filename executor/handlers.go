@@ -23,8 +23,50 @@ func NewInflateDockerImageHandler() HandlerFunc {
 		if !ok {
 			return errors.Errorf("unexpected type %T", content)
 		}
-		return docker.InflateImage(ctx, httpClient, m.Image, m.Tag, m.CacheDir)
+		return docker.InflateImage(ctx, docker.InflateImageConfig{
+			HTTPClient: httpClient,
+			CacheDir:   m.CacheDir,
+			Image:      m.Image,
+			Tag:        m.Tag,
+		})
 	}
+}
+
+// RunDockerContainerHandler is a standard handler for RunDockerContainer command.
+func RunDockerContainerHandler(ctx context.Context, content interface{}, encode wire.EncoderFunc) error {
+	m, ok := content.(wire.RunDockerContainer)
+	if !ok {
+		return errors.Errorf("unexpected type %T", content)
+	}
+
+	stdOut := &logTransmitter{
+		Stream: wire.StreamOut,
+		Encode: encode,
+	}
+	stdErr := &logTransmitter{
+		Stream: wire.StreamErr,
+		Encode: encode,
+	}
+
+	defer func() {
+		_ = stdOut.Flush()
+		_ = stdErr.Flush()
+	}()
+
+	return docker.RunContainer(ctx, docker.RunContainerConfig{
+		CacheDir:   m.CacheDir,
+		Image:      m.Image,
+		Tag:        m.Tag,
+		Name:       m.Name,
+		EnvVars:    m.EnvVars,
+		User:       m.User,
+		WorkingDir: m.WorkingDir,
+		Entrypoint: m.Entrypoint,
+		Args:       m.Args,
+
+		StdOut: stdOut,
+		StdErr: stdErr,
+	})
 }
 
 // ExecuteHandler is a standard handler handling Execute command.

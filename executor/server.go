@@ -43,11 +43,7 @@ func runServer(ctx context.Context, config Config, rootDir string) error {
 				return errors.WithStack(fmt.Errorf("preparing new root filesystem failed: %w", err))
 			}
 
-			if runtimeConfig.NoStandardMounts {
-				if err := mountProc(".proc"); err != nil {
-					return err
-				}
-			} else {
+			if runtimeConfig.ConfigureSystem {
 				if err := mountProc("proc"); err != nil {
 					return err
 				}
@@ -58,6 +54,10 @@ func runServer(ctx context.Context, config Config, rootDir string) error {
 					return err
 				}
 				if err := configureDNS(); err != nil {
+					return err
+				}
+			} else {
+				if err := mountProc(".proc"); err != nil {
 					return err
 				}
 			}
@@ -79,7 +79,7 @@ func runServer(ctx context.Context, config Config, rootDir string) error {
 					content, err := decode()
 					if err != nil {
 						if ctx.Err() != nil || errors.Is(err, io.EOF) {
-							return ctx.Err()
+							return errors.WithStack(ctx.Err())
 						}
 						return errors.WithStack(fmt.Errorf("receiving message failed: %w", err))
 					}
@@ -91,7 +91,7 @@ func runServer(ctx context.Context, config Config, rootDir string) error {
 
 					var errStr string
 					if err := handler(ctx, content, encode); err != nil {
-						log.Error("Command returned error", zap.Error(err))
+						log.Error("Command returned error", zap.Any("content", content), zap.Error(err))
 						errStr = err.Error()
 					}
 					if err := encode(wire.Result{
@@ -186,8 +186,22 @@ func applyMounts(mounts []wire.Mount) error {
 	for _, m := range mounts {
 		// force path in container should be relative to the new filesystem to prevent hacks (we haven't pivoted yet)
 		m.Container = filepath.Join(".", m.Container)
-		if err := os.MkdirAll(m.Container, 0o700); err != nil && !os.IsExist(err) {
+
+		info, err := os.Stat(m.Host)
+		if err != nil {
 			return errors.WithStack(err)
+		}
+		if info.IsDir() {
+			if err := os.MkdirAll(m.Container, 0o700); err != nil && !os.IsExist(err) {
+				return errors.WithStack(err)
+			}
+		} else {
+			if err := os.MkdirAll(filepath.Dir(m.Container), 0o700); err != nil && !os.IsExist(err) {
+				return errors.WithStack(err)
+			}
+			if err := os.WriteFile(m.Container, nil, info.Mode()); err != nil {
+				return errors.WithStack(err)
+			}
 		}
 		if err := syscall.Mount(m.Host, m.Container, "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
 			return errors.WithStack(fmt.Errorf("mounting %s to %s failed: %w", m.Host, m.Container, err))
