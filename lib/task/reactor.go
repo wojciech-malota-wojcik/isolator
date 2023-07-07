@@ -30,6 +30,7 @@ func Run(ctx context.Context, doneCh chan Task, sourceFunc SourceFunc) error {
 		taskCh := make(chan Task)
 
 		spawn("source", parallel.Continue, func(ctx context.Context) error {
+			defer close(taskCh)
 			return sourceFunc(ctx, taskCh, doneCh)
 		})
 

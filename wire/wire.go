@@ -3,6 +3,7 @@ package wire
 import (
 	"encoding/json"
 	"io"
+	"net"
 	"os"
 	"reflect"
 
@@ -25,6 +26,9 @@ type Mount struct {
 type Config struct {
 	// ConfigureSystem tells executor to mount standard mounts like /proc, /dev, /tmp ...  and configure DNS inside new root.
 	ConfigureSystem bool
+
+	// IP is the IP to assign executor to.
+	IP *net.IPNet
 
 	// Mounts is the list of bindings to apply inside container
 	Mounts []Mount
