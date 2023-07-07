@@ -33,6 +33,9 @@ import (
 	"github.com/outofforest/isolator/lib/task"
 )
 
+var userGroupRegExp = regexp.MustCompile("^[0-9]+(:[0-9]+)?$")
+
+// InflateImageConfig is the configuration of docker image inflation.
 type InflateImageConfig struct {
 	HTTPClient *http.Client
 	CacheDir   string
@@ -40,8 +43,7 @@ type InflateImageConfig struct {
 	Tag        string
 }
 
-var userGroupRegExp = regexp.MustCompile("^[0-9]+(:[0-9]+)?$")
-
+// RunContainerConfig is the configuration of running docker container.
 type RunContainerConfig struct {
 	CacheDir   string
 	Image      string
@@ -487,7 +489,7 @@ func (c *imageClient) fetchManifest(ctx context.Context, dstFile string) (retErr
 	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
 		return errors.WithStack(err)
 	}
-	defer unix.Flock(int(f.Fd()), unix.LOCK_UN)
+	defer unix.Flock(int(f.Fd()), unix.LOCK_UN) //nolint:errcheck
 
 	pos, err := f.Seek(0, unix.SEEK_END)
 	if err != nil {
@@ -594,7 +596,7 @@ func (c *imageClient) fetchBlob(ctx context.Context, digest, dstFile string) (re
 	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
 		return errors.WithStack(err)
 	}
-	defer unix.Flock(int(f.Fd()), unix.LOCK_UN)
+	defer unix.Flock(int(f.Fd()), unix.LOCK_UN) //nolint:errcheck
 
 	pos, err := f.Seek(0, unix.SEEK_END)
 	if err != nil {
