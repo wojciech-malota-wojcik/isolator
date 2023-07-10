@@ -115,7 +115,8 @@ func RunContainers(ctx context.Context, config RunContainerConfig, containers ..
 									wire.Result{},
 								},
 								Executor: wire.Config{
-									IP: network.Addr(inflateNetwork, 2),
+									IP:       network.Addr(inflateNetwork, 2),
+									Hostname: "inflate",
 									Mounts: []wire.Mount{
 										{
 											Host:      config.CacheDir,
@@ -166,6 +167,7 @@ func RunContainers(ctx context.Context, config RunContainerConfig, containers ..
 									},
 									Executor: wire.Config{
 										IP:              c.IP,
+										Hostname:        c.Name,
 										ConfigureSystem: true,
 										Mounts: []wire.Mount{
 											{
