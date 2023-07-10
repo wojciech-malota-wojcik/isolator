@@ -26,6 +26,7 @@ const (
 
 var mu = sync.Mutex{}
 
+// Random selects random available network.
 func Random(prefix uint8) (*net.IPNet, func() error, error) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -103,10 +104,12 @@ func findFreeNetwork(prefix uint8) (*net.IPNet, error) {
 	}
 }
 
+// Addr returns nth address in the network.
 func Addr(network *net.IPNet, index uint32) *net.IPNet {
 	return &net.IPNet{IP: uint32ToIP4(ip4ToUint32(netIP(network)) + index), Mask: network.Mask}
 }
 
+// Join adds container to the network.
 func Join(ip *net.IPNet, pid int) (func() error, error) {
 	bridgeLink, err := netlink.LinkByName(bridgeName(ip))
 	if err != nil {
@@ -154,6 +157,7 @@ func Join(ip *net.IPNet, pid int) (func() error, error) {
 	}, nil
 }
 
+// SetupContainer sets up networking inside network namespace.
 func SetupContainer(ip *net.IPNet) error {
 	lo, err := netlink.LinkByName("lo")
 	if err != nil {
@@ -527,11 +531,6 @@ func firstIP(network *net.IPNet) net.IP {
 func netIP(network *net.IPNet) net.IP {
 	ones, bits := network.Mask.Size()
 	return uint32ToIP4(ip4ToUint32(network.IP) & (uint32(math.MaxUint32) << (bits - ones)))
-}
-
-func netSize(networkNet *net.IPNet) uint32 {
-	ones, bits := networkNet.Mask.Size()
-	return uint32(1 << (bits - ones))
 }
 
 func bridgeName(ip *net.IPNet) string {
