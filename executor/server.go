@@ -61,7 +61,7 @@ func runServer(ctx context.Context, config Config, rootDir string) error {
 				if err := configureDNS(runtimeConfig.DNS); err != nil {
 					return err
 				}
-				if err := configureHosts(runtimeConfig.Hosts); err != nil {
+				if err := configureHosts(runtimeConfig.Hosts, runtimeConfig.Hostname, runtimeConfig.IP); err != nil {
 					return err
 				}
 			} else {
@@ -278,8 +278,14 @@ func configureDNS(dns []net.IP) error {
 	return nil
 }
 
-func configureHosts(hosts map[string]net.IP) error {
+func configureHosts(hosts map[string]net.IP, name string, ip *net.IPNet) error {
+	if hosts == nil {
+		hosts = map[string]net.IP{}
+	}
 	hosts["localhost"] = net.IPv4(127, 0, 0, 1)
+	if name != "" {
+		hosts[name] = ip.IP
+	}
 
 	if err := os.Mkdir("etc", 0o755); err != nil && !os.IsExist(err) {
 		return errors.WithStack(err)

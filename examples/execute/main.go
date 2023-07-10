@@ -99,7 +99,7 @@ func main() {
 			select {
 			case <-ctx.Done():
 				return errors.WithStack(ctx.Err())
-			case outgoing <- wire.Execute{Command: `hostname && ip a && ip r && ping google.com`}:
+			case outgoing <- wire.Execute{Command: `hostname && ip a && ip r && ping isolated-machine`}:
 			}
 
 			// Communication channel loop
