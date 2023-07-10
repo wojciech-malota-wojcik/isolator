@@ -74,6 +74,12 @@ func runServer(ctx context.Context, config Config, rootDir string) error {
 				return errors.WithStack(fmt.Errorf("pivoting root filesystem failed: %w", err))
 			}
 
+			if runtimeConfig.Hostname != "" {
+				if err := syscall.Sethostname([]byte(runtimeConfig.Hostname)); err != nil {
+					return errors.WithStack(err)
+				}
+			}
+
 			if runtimeConfig.IP != nil {
 				if err := network.SetupContainer(runtimeConfig.IP); err != nil {
 					return err

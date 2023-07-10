@@ -52,6 +52,7 @@ func main() {
 			Executor: wire.Config{
 				ConfigureSystem: true,
 				IP:              ip,
+				Hostname:        "isolated-machine",
 				Mounts: []wire.Mount{
 					// Let's make host's /tmp/mount available inside container under /test
 					{
@@ -94,7 +95,7 @@ func main() {
 			select {
 			case <-ctx.Done():
 				return errors.WithStack(ctx.Err())
-			case outgoing <- wire.Execute{Command: `ip a && ip r && ping 8.8.8.8`}:
+			case outgoing <- wire.Execute{Command: `hostname && ip a && ip r && ping 8.8.8.8`}:
 			}
 
 			// Communication channel loop

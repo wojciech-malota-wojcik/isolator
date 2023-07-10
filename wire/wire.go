@@ -30,6 +30,9 @@ type Config struct {
 	// IP is the IP to assign executor to.
 	IP *net.IPNet
 
+	// Hostname is the hostname to set inside namespace.
+	Hostname string
+
 	// Mounts is the list of bindings to apply inside container
 	Mounts []Mount
 }
