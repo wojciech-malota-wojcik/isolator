@@ -15,18 +15,22 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/outofforest/isolator/initprocess"
+	"github.com/outofforest/isolator/network"
 	"github.com/outofforest/isolator/wire"
 )
 
 func runServer(ctx context.Context, config Config, rootDir string) error {
 	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
+		log := logger.Get(ctx)
+		log.Info("Server started")
+
 		spawn("watchdog", parallel.Fail, func(ctx context.Context) error {
 			<-ctx.Done()
 			// os.Stdin is used as input stream for client, so it has to be closed to force client.Receive() to exit
 			_ = os.Stdin.Close()
 			return errors.WithStack(ctx.Err())
 		})
-		spawn("server", parallel.Exit, func(ctx context.Context) error {
+		spawn("server", parallel.Fail, func(ctx context.Context) error {
 			decode := wire.NewDecoder(os.Stdin, append(config.Router.Types(), wire.Config{}))
 			encode := wire.NewEncoder(os.Stdout)
 
@@ -68,6 +72,12 @@ func runServer(ctx context.Context, config Config, rootDir string) error {
 
 			if err := pivotRoot(); err != nil {
 				return errors.WithStack(fmt.Errorf("pivoting root filesystem failed: %w", err))
+			}
+
+			if runtimeConfig.IP != nil {
+				if err := network.SetupContainer(runtimeConfig.IP); err != nil {
+					return err
+				}
 			}
 
 			return run.WithFlavours(ctx, []run.FlavourFunc{

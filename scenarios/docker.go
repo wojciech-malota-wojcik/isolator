@@ -14,6 +14,7 @@ import (
 
 	"github.com/outofforest/isolator"
 	"github.com/outofforest/isolator/lib/task"
+	"github.com/outofforest/isolator/network"
 	"github.com/outofforest/isolator/wire"
 )
 
@@ -47,7 +48,7 @@ type Container struct {
 	Args []string
 
 	// IP is the IP address of the container.
-	IP net.IP
+	IP *net.IPNet
 }
 
 // Mount defines the mount to be configured inside container.
@@ -72,14 +73,14 @@ func RunContainers(ctx context.Context, config RunContainerConfig, containers ..
 			return task.Run(ctx, nil, func(ctx context.Context, taskCh chan<- task.Task, doneCh <-chan task.Task) error {
 				for _, c := range containers {
 					c := c
-
 					select {
 					case <-ctx.Done():
 						return errors.WithStack(ctx.Err())
 					case taskCh <- task.Task{
 						ID: "container:run:" + c.Name,
-						Do: func(ctx context.Context) error {
+						Do: func(ctx context.Context) (retErr error) {
 							ctx = logger.With(ctx, zap.String("container", c.Name))
+							log := logger.Get(ctx)
 
 							if err := os.MkdirAll(config.ContainerDir, 0o700); err != nil {
 								return errors.WithStack(err)
@@ -95,12 +96,26 @@ func RunContainers(ctx context.Context, config RunContainerConfig, containers ..
 								return errors.WithStack(err)
 							}
 
-							err := isolator.Run(ctx, isolator.Config{
+							inflateNetwork, clean, err := network.Random(30)
+							if err != nil {
+								return err
+							}
+							defer func() {
+								if err := clean(); err != nil {
+									if retErr == nil {
+										retErr = err
+									}
+									log.Error("Cleaning network failed", zap.Error(err))
+								}
+							}()
+
+							err = isolator.Run(ctx, isolator.Config{
 								Dir: containerDir,
 								Types: []interface{}{
 									wire.Result{},
 								},
 								Executor: wire.Config{
+									IP: network.Addr(inflateNetwork, 2),
 									Mounts: []wire.Mount{
 										{
 											Host:      config.CacheDir,
@@ -123,20 +138,7 @@ func RunContainers(ctx context.Context, config RunContainerConfig, containers ..
 								}:
 								}
 
-								for {
-									var content interface{}
-									var ok bool
-
-									select {
-									case <-ctx.Done():
-										return errors.WithStack(ctx.Err())
-									case content, ok = <-incoming:
-									}
-
-									if !ok {
-										return errors.WithStack(ctx.Err())
-									}
-
+								for content := range incoming {
 									switch m := content.(type) {
 									// wire.Result means command finished
 									case wire.Result:
@@ -148,6 +150,8 @@ func RunContainers(ctx context.Context, config RunContainerConfig, containers ..
 										panic("unexpected message received")
 									}
 								}
+
+								return errors.WithStack(ctx.Err())
 							})
 							if err != nil {
 								return err
@@ -161,6 +165,7 @@ func RunContainers(ctx context.Context, config RunContainerConfig, containers ..
 										wire.Result{},
 									},
 									Executor: wire.Config{
+										IP:              c.IP,
 										ConfigureSystem: true,
 										Mounts: []wire.Mount{
 											{
@@ -200,20 +205,7 @@ func RunContainers(ctx context.Context, config RunContainerConfig, containers ..
 									}:
 									}
 
-									for {
-										var content interface{}
-										var ok bool
-
-										select {
-										case <-ctx.Done():
-											return errors.WithStack(ctx.Err())
-										case content, ok = <-incoming:
-										}
-
-										if !ok {
-											return errors.WithStack(ctx.Err())
-										}
-
+									for content := range incoming {
 										switch m := content.(type) {
 										// wire.Log contains message printed by executed command to stdout or stderr
 										case wire.Log:
@@ -234,6 +226,8 @@ func RunContainers(ctx context.Context, config RunContainerConfig, containers ..
 											panic("unexpected message received")
 										}
 									}
+
+									return errors.WithStack(ctx.Err())
 								})
 							})
 							return nil
