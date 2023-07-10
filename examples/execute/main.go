@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"net"
 	"os"
 
 	"github.com/outofforest/logger"
@@ -53,6 +54,9 @@ func main() {
 				ConfigureSystem: true,
 				IP:              ip,
 				Hostname:        "isolated-machine",
+				Hosts: map[string]net.IP{
+					"brother": net.IPv4(1, 1, 1, 1),
+				},
 				Mounts: []wire.Mount{
 					// Let's make host's /tmp/mount available inside container under /test
 					{
