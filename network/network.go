@@ -1,7 +1,6 @@
 package network
 
 import (
-	"bytes"
 	"encoding/hex"
 	"math"
 	"math/rand"
@@ -92,7 +91,7 @@ func findFreeNetwork(prefix uint8) (*net.IPNet, error) {
 			n1 := netIP(&net.IPNet{IP: ipNet.IP, Mask: mask})
 			n2 := netIP(&net.IPNet{IP: n.IP, Mask: mask})
 
-			if bytes.Equal(n1, n2) {
+			if n1.Equal(n2) {
 				exists = true
 				break
 			}
@@ -111,9 +110,13 @@ func Addr(network *net.IPNet, index uint32) *net.IPNet {
 
 // Join adds container to the network.
 func Join(ip *net.IPNet, pid int) (func() error, error) {
-	bridgeLink, err := netlink.LinkByName(bridgeName(ip))
+	link, err := netlink.LinkByName(bridgeName(ip))
 	if err != nil {
 		return nil, errors.WithStack(err)
+	}
+	bridgeLink, ok := link.(*netlink.Bridge)
+	if !ok {
+		return nil, errors.New("link is not a bridge")
 	}
 
 	vethN := vethName(ip.IP)
@@ -135,7 +138,7 @@ func Join(ip *net.IPNet, pid int) (func() error, error) {
 		return nil, errors.WithStack(err)
 	}
 
-	if err := netlink.LinkSetMaster(vethHost, bridgeLink.(*netlink.Bridge)); err != nil {
+	if err := netlink.LinkSetMaster(vethHost, bridgeLink); err != nil {
 		return nil, errors.WithStack(err)
 	}
 
@@ -503,7 +506,7 @@ func cleanFirewall(network *net.IPNet) error {
 			if len(r.UserData) != 4 {
 				continue
 			}
-			if !bytes.Equal(netIP(&net.IPNet{IP: r.UserData, Mask: network.Mask}), netAddr) {
+			if !netIP(&net.IPNet{IP: r.UserData, Mask: network.Mask}).Equal(netAddr) {
 				continue
 			}
 			if err := c.DelRule(r); err != nil {
