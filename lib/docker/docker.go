@@ -131,8 +131,6 @@ func (c *imageClient) Inflate(ctx context.Context) error {
 	log.Info("Docker image requested")
 
 	return task.Run(ctx, make(chan task.Task), func(ctx context.Context, taskCh chan<- task.Task, doneCh <-chan task.Task) error {
-		defer close(taskCh)
-
 		select {
 		case <-ctx.Done():
 			return errors.WithStack(ctx.Err())
@@ -348,7 +346,7 @@ func (c *imageClient) RunContainer(ctx context.Context, config RunContainerConfi
 	}
 
 	args := append([]string{}, config.Entrypoint...)
-	if config.Args != nil {
+	if config.Args != nil || config.Entrypoint != nil {
 		args = append(args, config.Args...)
 	} else {
 		args = append(args, cc.Config.Cmd...)

@@ -1,8 +1,10 @@
 package isolator
 
-import "github.com/outofforest/isolator/wire"
+import (
+	"github.com/outofforest/isolator/wire"
+)
 
-// Config stores configuration of isolator
+// Config stores configuration of isolator.
 type Config struct {
 	// Types defines the list of allowed types transferred between isolator and executor server.
 	Types []interface{}
@@ -11,9 +13,9 @@ type Config struct {
 	// See `executor.Catch`.
 	ExecutorArg string
 
-	// Directory where root filesystem exists
+	// Directory where root filesystem exists.
 	Dir string
 
-	// Executor stores configuration passed to executor
+	// Executor stores configuration passed to executor.
 	Executor wire.Config
 }

@@ -1,7 +1,6 @@
 package isolator
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -17,6 +16,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/outofforest/isolator/executor"
+	"github.com/outofforest/isolator/network"
 	"github.com/outofforest/isolator/wire"
 )
 
@@ -32,6 +32,7 @@ func Run(ctx context.Context, config Config, clientFunc ClientFunc) error {
 
 	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
 		startCh := make(chan struct{})
+		startedCh := make(chan int, 1)
 
 		outPipe := newPipe()
 		inPipe := newPipe()
@@ -58,88 +59,123 @@ func Run(ctx context.Context, config Config, clientFunc ClientFunc) error {
 			cmd := newExecutorServerCommand(config)
 			cmd.Stdout = outPipe
 			cmd.Stdin = inPipe
+			cmd.Stderr = os.Stderr
 
-			// cmd.Wait() called inside libexec does not return until stdin, stdout and stderr are fully processed,
-			// that's why cmd.Process.Wait is used inside the implementation below. Otherwise, cmd never exits.
-			return execServer(ctx, cmd)
+			if err := cmd.Start(); err != nil {
+				return errors.WithStack(err)
+			}
+
+			startedCh <- cmd.Process.Pid
+
+			return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
+				spawn("watchdog", parallel.Fail, func(ctx context.Context) error {
+					<-ctx.Done()
+					_ = cmd.Process.Signal(syscall.SIGTERM)
+					_ = cmd.Process.Signal(syscall.SIGINT)
+					return errors.WithStack(ctx.Err())
+				})
+				spawn("command", parallel.Fail, func(ctx context.Context) error {
+					// cmd.Wait() called inside libexec does not return until stdin, stdout and stderr are fully processed,
+					// that's why cmd.Process.Wait is used inside the implementation below. Otherwise, cmd never exits.
+					_, err := cmd.Process.Wait()
+					if ctx.Err() != nil {
+						return errors.WithStack(ctx.Err())
+					}
+					if err != nil {
+						return errors.WithStack(cmdError{Err: err, Debug: cmd.String()})
+					}
+					return nil
+				})
+				return nil
+			})
 		})
 		spawn("watchdog", parallel.Fail, func(ctx context.Context) error {
 			<-ctx.Done()
 
-			// cmd.Wait() called inside libexec does not return until stdin, stdout and stderr are fully processed,
-			// so they must be closed here. Otherwise, cmd never exits.
 			_ = outPipe.Close()
 			_ = inPipe.Close()
 
 			return errors.WithStack(ctx.Err())
 		})
-		spawn("communication", parallel.Fail, func(ctx context.Context) error {
-			return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
-				spawn("sender", parallel.Fail, func(ctx context.Context) error {
-					encode := wire.NewEncoder(inPipe)
-					var serverStarted bool
-					for {
-						var content interface{}
-						var ok bool
+		spawn("sender", parallel.Fail, func(ctx context.Context) (retErr error) {
+			log := logger.Get(ctx)
+			encode := wire.NewEncoder(inPipe)
+			var serverStarted bool
+			for {
+				var content interface{}
+				var ok bool
 
+				select {
+				case <-ctx.Done():
+					return errors.WithStack(ctx.Err())
+				case content, ok = <-outgoing:
+				}
+
+				if !ok {
+					return errors.WithStack(ctx.Err())
+				}
+
+				if !serverStarted {
+					serverStarted = true
+					close(startCh)
+
+					if config.Executor.IP != nil {
 						select {
 						case <-ctx.Done():
 							return errors.WithStack(ctx.Err())
-						case content, ok = <-outgoing:
-						}
-
-						if !ok {
-							return errors.WithStack(ctx.Err())
-						}
-
-						if !serverStarted {
-							serverStarted = true
-							close(startCh)
-
-							// config is guaranteed to be the first message sent
-							err := encode(config.Executor)
+						case pid := <-startedCh:
+							clean, err := network.Join(config.Executor.IP, pid)
 							if err != nil {
-								if errors.Is(err, io.EOF) {
-									return errors.WithStack(ctx.Err())
+								return err
+							}
+							defer func() {
+								if err := clean(); err != nil {
+									if retErr == nil {
+										retErr = err
+									}
+									log.Error("Cleaning network setup failed", zap.Error(err))
 								}
-								return errors.WithStack(err)
-							}
-						}
-
-						err = encode(content)
-						if err != nil {
-							if errors.Is(err, io.EOF) {
-								return errors.WithStack(ctx.Err())
-							}
-							return errors.WithStack(err)
+							}()
 						}
 					}
-				})
-				spawn("receiver", parallel.Fail, func(ctx context.Context) error {
-					defer close(incoming)
 
-					decode := wire.NewDecoder(outPipe, config.Types)
-					for {
-						content, err := decode()
-						if err != nil {
-							if errors.Is(err, io.EOF) {
-								return errors.WithStack(ctx.Err())
-							}
-							return errors.WithStack(err)
-						}
-
-						select {
-						case <-ctx.Done():
+					// config is guaranteed to be the first message sent
+					err := encode(config.Executor)
+					if err != nil {
+						if errors.Is(err, io.ErrClosedPipe) {
 							return errors.WithStack(ctx.Err())
-						case incoming <- content:
 						}
+						return errors.WithStack(err)
 					}
-				})
+				}
 
-				return nil
-			})
+				err = encode(content)
+				if err != nil {
+					if errors.Is(err, io.ErrClosedPipe) {
+						return errors.WithStack(ctx.Err())
+					}
+					return errors.WithStack(err)
+				}
+			}
+		})
+		spawn("receiver", parallel.Fail, func(ctx context.Context) error {
+			defer close(incoming)
+
+			decode := wire.NewDecoder(outPipe, config.Types)
+			for {
+				content, err := decode()
+				if err != nil {
+					if errors.Is(err, io.EOF) {
+						return errors.WithStack(ctx.Err())
+					}
+					return errors.WithStack(err)
+				}
+
+				incoming <- content
+			}
 		})
 		spawn("client", parallel.Exit, func(ctx context.Context) error {
+			defer close(outgoing)
 			return clientFunc(ctx, incoming, outgoing)
 		})
 
@@ -166,8 +202,14 @@ func newExecutorServerCommand(config Config) *exec.Cmd {
 	cmd.Dir = filepath.Dir(config.Dir)
 	cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/bin"}
 	cmd.SysProcAttr = &unix.SysProcAttr{
-		Pdeathsig:  unix.SIGKILL,
-		Cloneflags: unix.CLONE_NEWPID | unix.CLONE_NEWNS | unix.CLONE_NEWUSER | unix.CLONE_NEWIPC | unix.CLONE_NEWUTS | unix.CLONE_NEWCGROUP,
+		Pdeathsig: unix.SIGKILL,
+		Cloneflags: unix.CLONE_NEWPID |
+			unix.CLONE_NEWNS |
+			unix.CLONE_NEWUSER |
+			unix.CLONE_NEWIPC |
+			unix.CLONE_NEWUTS |
+			unix.CLONE_NEWCGROUP |
+			unix.CLONE_NEWNET,
 		AmbientCaps: []uintptr{
 			unix.CAP_SYS_ADMIN, // by adding CAP_SYS_ADMIN executor may mount /proc
 		},
@@ -256,54 +298,6 @@ func (p *pipe) Close() error {
 	case <-p.closed:
 	default:
 		close(p.closed)
-	}
-	return nil
-}
-
-func execServer(ctx context.Context, cmds ...*exec.Cmd) error {
-	for _, cmd := range cmds {
-		cmd := cmd
-		if cmd.Stdout == nil {
-			cmd.Stdout = os.Stdout
-		}
-		if cmd.Stderr == nil {
-			cmd.Stderr = os.Stderr
-		}
-		if cmd.Stdin == nil {
-			// If Stdin is nil, then exec library tries to assign it to /dev/null
-			// Null device does not exist in chrooted environment unless created, so we set a fake nil buffer
-			// just to remove this dependency
-			cmd.Stdin = bytes.NewReader(nil)
-		}
-
-		logger.Get(ctx).Debug("Executing command", zap.Stringer("command", cmd))
-
-		if err := cmd.Start(); err != nil {
-			return errors.WithStack(err)
-		}
-
-		err := parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
-			spawn("cmd", parallel.Exit, func(ctx context.Context) error {
-				_, err := cmd.Process.Wait()
-				if ctx.Err() != nil {
-					return errors.WithStack(ctx.Err())
-				}
-				if err != nil {
-					return errors.WithStack(cmdError{Err: err, Debug: cmd.String()})
-				}
-				return nil
-			})
-			spawn("ctx", parallel.Fail, func(ctx context.Context) error {
-				<-ctx.Done()
-				_ = cmd.Process.Signal(syscall.SIGTERM)
-				_ = cmd.Process.Signal(syscall.SIGINT)
-				return errors.WithStack(ctx.Err())
-			})
-			return nil
-		})
-		if err != nil {
-			return err
-		}
 	}
 	return nil
 }
