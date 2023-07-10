@@ -36,6 +36,9 @@ type Config struct {
 	// DNS is the list of DnS servers to configure inside namespace.
 	DNS []net.IP
 
+	// Hosts is the list of hosts and their IP addresses to resolve inside namespace.
+	Hosts map[string]net.IP
+
 	// Mounts is the list of bindings to apply inside container
 	Mounts []Mount
 }

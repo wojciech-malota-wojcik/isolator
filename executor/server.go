@@ -61,6 +61,9 @@ func runServer(ctx context.Context, config Config, rootDir string) error {
 				if err := configureDNS(runtimeConfig.DNS); err != nil {
 					return err
 				}
+				if err := configureHosts(runtimeConfig.Hosts); err != nil {
+					return err
+				}
 			} else {
 				if err := mountProc(".proc"); err != nil {
 					return err
@@ -268,6 +271,28 @@ func configureDNS(dns []net.IP) error {
 
 	for _, s := range dns {
 		if _, err := f.WriteString(fmt.Sprintf("nameserver %s\n", s)); err != nil {
+			return errors.WithStack(err)
+		}
+	}
+
+	return nil
+}
+
+func configureHosts(hosts map[string]net.IP) error {
+	hosts["localhost"] = net.IPv4(127, 0, 0, 1)
+
+	if err := os.Mkdir("etc", 0o755); err != nil && !os.IsExist(err) {
+		return errors.WithStack(err)
+	}
+
+	f, err := os.OpenFile(filepath.Join("etc", "hosts"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	defer f.Close()
+
+	for h, ip := range hosts {
+		if _, err := f.WriteString(fmt.Sprintf("%s %s\n", ip, h)); err != nil {
 			return errors.WithStack(err)
 		}
 	}
