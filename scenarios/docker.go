@@ -49,6 +49,9 @@ type Container struct {
 
 	// IP is the IP address of the container.
 	IP *net.IPNet
+
+	// DNS is the list of nameservers to configure inside container.
+	DNS []net.IP
 }
 
 // Mount defines the mount to be configured inside container.
@@ -168,6 +171,7 @@ func RunContainers(ctx context.Context, config RunContainerConfig, containers ..
 									Executor: wire.Config{
 										IP:              c.IP,
 										Hostname:        c.Name,
+										DNS:             c.DNS,
 										ConfigureSystem: true,
 										Mounts: []wire.Mount{
 											{

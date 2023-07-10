@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -57,7 +58,7 @@ func runServer(ctx context.Context, config Config, rootDir string) error {
 				if err := populateDev(); err != nil {
 					return err
 				}
-				if err := configureDNS(); err != nil {
+				if err := configureDNS(runtimeConfig.DNS); err != nil {
 					return err
 				}
 			} else {
@@ -247,9 +248,29 @@ func pivotRoot() error {
 	return errors.WithStack(os.Remove(".old"))
 }
 
-func configureDNS() error {
+func configureDNS(dns []net.IP) error {
+	if dns == nil {
+		dns = []net.IP{
+			net.IPv4(8, 8, 8, 8),
+			net.IPv4(1, 1, 1, 1),
+		}
+	}
+
 	if err := os.Mkdir("etc", 0o755); err != nil && !os.IsExist(err) {
 		return errors.WithStack(err)
 	}
-	return errors.WithStack(os.WriteFile("etc/resolv.conf", []byte("nameserver 8.8.8.8\nnameserver 8.8.4.4\n"), 0o644))
+
+	f, err := os.OpenFile(filepath.Join("etc", "resolv.conf"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	defer f.Close()
+
+	for _, s := range dns {
+		if _, err := f.WriteString(fmt.Sprintf("nameserver %s\n", s)); err != nil {
+			return errors.WithStack(err)
+		}
+	}
+
+	return nil
 }
