@@ -338,12 +338,19 @@ func enableForwarding() error {
 }
 
 func deleteBridge(network *net.IPNet) error {
-	bridgeLink, err := netlink.LinkByName(bridgeName(network))
+	links, err := netlink.LinkList()
 	if err != nil {
-		return nil //nolint:nilerr // yes, I know
+		return errors.WithStack(err)
 	}
 
-	return errors.WithStack(netlink.LinkDel(bridgeLink))
+	bridge := bridgeName(network)
+	for _, l := range links {
+		if l.Attrs().Name == bridge {
+			return errors.WithStack(netlink.LinkDel(l))
+		}
+	}
+
+	return nil
 }
 
 func configureFirewall(network *net.IPNet) error {
