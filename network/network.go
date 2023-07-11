@@ -6,24 +6,36 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/google/nftables"
-	"github.com/google/nftables/binaryutil"
-	"github.com/google/nftables/expr"
 	"github.com/pkg/errors"
 	"github.com/vishvananda/netlink"
+
+	"github.com/outofforest/isolator/lib/firewall"
 )
 
 const (
-	nftTable            = "isolator"
-	nftChainInput       = "INPUT"
-	nftChainOutput      = "OUTPUT"
-	nftChainForward     = "FORWARD"
-	nftChainPostrouting = "POSTROUTING"
+	nftTable               = "isolator"
+	nftChainFilterInput    = "FILTER_INPUT"
+	nftChainFilterOutput   = "FILTER_OUTPUT"
+	nftChainFilterForward  = "FILTER_FORWARD"
+	nftChainNATOutput      = "NAT_OUTPUT"
+	nftChainNATPrerouting  = "NAT_PREROUTING"
+	nftChainNATPostrouting = "NAT_POSTROUTING"
 )
 
 var mu = sync.Mutex{}
+
+// ExposedPort defines a port to be exposed from the namespace.
+type ExposedPort struct {
+	Protocol     string
+	ExternalIP   net.IP
+	ExternalPort uint16
+	InternalPort uint16
+	Public       bool
+}
 
 // Random selects random available network.
 func Random(prefix uint8) (*net.IPNet, func() error, error) {
@@ -43,7 +55,7 @@ func Random(prefix uint8) (*net.IPNet, func() error, error) {
 		return nil, nil, err
 	}
 
-	if err := enableForwarding(); err != nil {
+	if err := enableForwarding(network); err != nil {
 		return nil, nil, err
 	}
 
@@ -109,7 +121,7 @@ func Addr(network *net.IPNet, index uint32) *net.IPNet {
 }
 
 // Join adds container to the network.
-func Join(ip *net.IPNet, pid int) (func() error, error) {
+func Join(ip *net.IPNet, exposedPorts []ExposedPort, pid int) (func() error, error) {
 	link, err := netlink.LinkByName(bridgeName(ip))
 	if err != nil {
 		return nil, errors.WithStack(err)
@@ -151,7 +163,7 @@ func Join(ip *net.IPNet, pid int) (func() error, error) {
 		return nil, errors.WithStack(err)
 	}
 
-	if err := configureFirewall(ip); err != nil {
+	if err := configureFirewall(ip, exposedPorts); err != nil {
 		return nil, err
 	}
 
@@ -247,20 +259,20 @@ func prepareFirewall() error {
 		return errors.WithStack(err)
 	}
 
-	var inputChain *nftables.Chain
+	var inputFilterChain *nftables.Chain
 	for _, ch := range chains {
 		if ch.Table.Name != nftTable {
 			continue
 		}
-		if ch.Name == nftChainInput {
-			inputChain = ch
+		if ch.Name == nftChainFilterInput {
+			inputFilterChain = ch
 			break
 		}
 	}
 
-	if inputChain == nil {
-		inputChain = c.AddChain(&nftables.Chain{
-			Name:     nftChainInput,
+	if inputFilterChain == nil {
+		inputFilterChain = c.AddChain(&nftables.Chain{
+			Name:     nftChainFilterInput,
 			Table:    table,
 			Type:     nftables.ChainTypeFilter,
 			Hooknum:  nftables.ChainHookInput,
@@ -270,43 +282,25 @@ func prepareFirewall() error {
 
 		c.AddRule(&nftables.Rule{
 			Table: table,
-			Chain: inputChain,
-			Exprs: []expr.Any{
-				&expr.Ct{Register: 1, SourceRegister: false, Key: expr.CtKeySTATE},
-				&expr.Bitwise{
-					SourceRegister: 1,
-					DestRegister:   1,
-					Len:            4,
-					Mask:           binaryutil.NativeEndian.PutUint32(expr.CtStateBitESTABLISHED | expr.CtStateBitRELATED),
-					Xor:            binaryutil.NativeEndian.PutUint32(0),
-				},
-				&expr.Cmp{Op: expr.CmpOpNeq, Register: 1, Data: []byte{0x00, 0x00, 0x00, 0x00}},
-				&expr.Counter{},
-				&expr.Verdict{
-					Kind: expr.VerdictAccept,
-				},
-			},
+			Chain: inputFilterChain,
+			Exprs: firewall.Expressions(
+				firewall.ConnectionEstablished(),
+				firewall.Accept(),
+			),
 		})
 		c.AddRule(&nftables.Rule{
 			Table: table,
-			Chain: inputChain,
-			Exprs: []expr.Any{
-				&expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
-				&expr.Cmp{
-					Op:       expr.CmpOpEq,
-					Register: 1,
-					Data:     []byte("lo\x00"),
-				},
-				&expr.Counter{},
-				&expr.Verdict{
-					Kind: expr.VerdictAccept,
-				},
-			},
+			Chain: inputFilterChain,
+			Exprs: firewall.Expressions(
+				firewall.IncomingInterface("lo"),
+				firewall.LocalSourceAddress(),
+				firewall.Accept(),
+			),
 		})
 	}
 
 	c.AddChain(&nftables.Chain{
-		Name:     nftChainOutput,
+		Name:     nftChainFilterOutput,
 		Table:    table,
 		Type:     nftables.ChainTypeFilter,
 		Hooknum:  nftables.ChainHookOutput,
@@ -314,7 +308,7 @@ func prepareFirewall() error {
 		Policy:   &policyAccept,
 	})
 	c.AddChain(&nftables.Chain{
-		Name:     nftChainForward,
+		Name:     nftChainFilterForward,
 		Table:    table,
 		Type:     nftables.ChainTypeFilter,
 		Hooknum:  nftables.ChainHookForward,
@@ -322,7 +316,23 @@ func prepareFirewall() error {
 		Policy:   &policyDrop,
 	})
 	c.AddChain(&nftables.Chain{
-		Name:     nftChainPostrouting,
+		Name:     nftChainNATOutput,
+		Table:    table,
+		Hooknum:  nftables.ChainHookOutput,
+		Priority: nftables.ChainPriorityNATSource,
+		Type:     nftables.ChainTypeNAT,
+		Policy:   &policyAccept,
+	})
+	c.AddChain(&nftables.Chain{
+		Name:     nftChainNATPrerouting,
+		Table:    table,
+		Hooknum:  nftables.ChainHookPrerouting,
+		Priority: nftables.ChainPriorityNATDest,
+		Type:     nftables.ChainTypeNAT,
+		Policy:   &policyAccept,
+	})
+	c.AddChain(&nftables.Chain{
+		Name:     nftChainNATPostrouting,
 		Table:    table,
 		Hooknum:  nftables.ChainHookPostrouting,
 		Priority: nftables.ChainPriorityNATSource,
@@ -333,8 +343,12 @@ func prepareFirewall() error {
 	return errors.WithStack(c.Flush())
 }
 
-func enableForwarding() error {
-	return errors.WithStack(os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0o600))
+func enableForwarding(network *net.IPNet) error {
+	if err := os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0o600); err != nil {
+		return errors.WithStack(err)
+	}
+
+	return errors.WithStack(os.WriteFile(filepath.Join("/proc/sys/net/ipv4/conf", bridgeName(network), "route_localnet"), []byte("1"), 0o600))
 }
 
 func deleteBridge(network *net.IPNet) error {
@@ -353,7 +367,7 @@ func deleteBridge(network *net.IPNet) error {
 	return nil
 }
 
-func configureFirewall(network *net.IPNet) error {
+func configureFirewall(ip *net.IPNet, exposedPorts []ExposedPort) error {
 	c := &nftables.Conn{}
 
 	tables, err := c.ListTables()
@@ -378,91 +392,154 @@ func configureFirewall(network *net.IPNet) error {
 		return errors.WithStack(err)
 	}
 
-	var forwardChain *nftables.Chain
-	var postroutingChain *nftables.Chain
+	var filterForwardChain *nftables.Chain
+	var natOutputChain *nftables.Chain
+	var natPreroutingChain *nftables.Chain
+	var natPostroutingChain *nftables.Chain
 	for _, ch := range chains {
 		if ch.Table.Name != nftTable {
 			continue
 		}
 		switch ch.Name {
-		case nftChainForward:
-			forwardChain = ch
-		case nftChainPostrouting:
-			postroutingChain = ch
+		case nftChainFilterForward:
+			filterForwardChain = ch
+		case nftChainNATOutput:
+			natOutputChain = ch
+		case nftChainNATPrerouting:
+			natPreroutingChain = ch
+		case nftChainNATPostrouting:
+			natPostroutingChain = ch
 		}
-		if forwardChain != nil && postroutingChain != nil {
+		if filterForwardChain != nil && natOutputChain != nil && natPreroutingChain != nil && natPostroutingChain != nil {
 			break
 		}
 	}
 
-	if forwardChain == nil {
-		return errors.Errorf("chain %s does not exist", nftChainForward)
+	if filterForwardChain == nil {
+		return errors.Errorf("chain %s does not exist", nftChainFilterForward)
 	}
-	if postroutingChain == nil {
-		return errors.Errorf("chain %s does not exist", nftChainPostrouting)
+	if natOutputChain == nil {
+		return errors.Errorf("chain %s does not exist", nftChainNATOutput)
+	}
+	if natPreroutingChain == nil {
+		return errors.Errorf("chain %s does not exist", nftChainNATPrerouting)
+	}
+	if natPostroutingChain == nil {
+		return errors.Errorf("chain %s does not exist", nftChainNATPostrouting)
 	}
 
-	bridge := bridgeName(network)
-	netAddr := netIP(network)
+	bridge := bridgeName(ip)
+	netAddr := netIP(ip)
+
+	// forward from namespace
 	c.AddRule(&nftables.Rule{
 		Table:    table,
-		Chain:    forwardChain,
+		Chain:    filterForwardChain,
 		UserData: netAddr,
-		Exprs: []expr.Any{
-			&expr.Meta{Key: expr.MetaKeyOIFNAME, Register: 1},
-			&expr.Cmp{
-				Op:       expr.CmpOpEq,
-				Register: 1,
-				Data:     []byte(bridge + "\x00"),
-			},
-			&expr.Ct{Register: 1, SourceRegister: false, Key: expr.CtKeySTATE},
-			&expr.Bitwise{
-				SourceRegister: 1,
-				DestRegister:   1,
-				Len:            4,
-				Mask:           binaryutil.NativeEndian.PutUint32(expr.CtStateBitESTABLISHED | expr.CtStateBitRELATED),
-				Xor:            binaryutil.NativeEndian.PutUint32(0),
-			},
-			&expr.Cmp{Op: expr.CmpOpNeq, Register: 1, Data: []byte{0x00, 0x00, 0x00, 0x00}},
-			&expr.Counter{},
-			&expr.Verdict{
-				Kind: expr.VerdictAccept,
-			},
-		},
-	})
-	c.AddRule(&nftables.Rule{
-		Table:    forwardChain.Table,
-		Chain:    forwardChain,
-		UserData: netAddr,
-		Exprs: []expr.Any{
-			&expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
-			&expr.Cmp{
-				Op:       expr.CmpOpEq,
-				Register: 1,
-				Data:     []byte(bridge + "\x00"),
-			},
-			&expr.Counter{},
-			&expr.Verdict{
-				Kind: expr.VerdictAccept,
-			},
-		},
+		Exprs: firewall.Expressions(
+			firewall.OutgoingInterface(bridge),
+			firewall.ConnectionEstablished(),
+			firewall.Accept(),
+		),
 	})
 
+	// forward to namespace
+	c.AddRule(&nftables.Rule{
+		Table:    filterForwardChain.Table,
+		Chain:    filterForwardChain,
+		UserData: netAddr,
+		Exprs: firewall.Expressions(
+			firewall.IncomingInterface(bridge),
+			firewall.Accept(),
+		),
+	})
+
+	// masquerade namespace
 	c.AddRule(&nftables.Rule{
 		Table:    table,
-		Chain:    postroutingChain,
+		Chain:    natPostroutingChain,
 		UserData: netAddr,
-		Exprs: []expr.Any{
-			&expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
-			&expr.Cmp{
-				Op:       expr.CmpOpEq,
-				Register: 1,
-				Data:     []byte(bridge + "\x00"),
-			},
-			&expr.Counter{},
-			&expr.Masq{},
-		},
+		Exprs: firewall.Expressions(
+			firewall.IncomingInterface(bridge),
+			firewall.Masquerade(),
+		),
 	})
+
+	hostIP := firstIP(ip)
+	for _, p := range exposedPorts {
+		// redirecting requests originating from the host machine
+		c.AddRule(&nftables.Rule{
+			Table:    table,
+			Chain:    natOutputChain,
+			UserData: ip.IP,
+			Exprs: firewall.Expressions(
+				firewall.DestinationAddress(p.ExternalIP),
+				firewall.Protocol(p.Protocol),
+				firewall.DestinationPort(p.ExternalPort),
+				firewall.DestinationNAT(ip.IP, p.InternalPort),
+			),
+		})
+
+		// redirecting requests from local addresses.
+		c.AddRule(&nftables.Rule{
+			Table:    table,
+			Chain:    natPostroutingChain,
+			UserData: ip.IP,
+			Exprs: firewall.Expressions(
+				firewall.OutgoingInterface(bridge),
+				firewall.NotSourceAddress(hostIP),
+				firewall.LocalSourceAddress(),
+				firewall.DestinationAddress(ip.IP),
+				firewall.Protocol(p.Protocol),
+				firewall.DestinationPort(p.InternalPort),
+				firewall.Masquerade(),
+			),
+		})
+
+		if p.Public {
+			// enable forwarding
+			c.AddRule(&nftables.Rule{
+				Table:    table,
+				Chain:    filterForwardChain,
+				UserData: ip.IP,
+				Exprs: firewall.Expressions(
+					firewall.DestinationAddress(ip.IP),
+					firewall.Protocol(p.Protocol),
+					firewall.DestinationPort(p.InternalPort),
+					firewall.Accept(),
+				),
+			})
+
+			// redirecting external requests
+			c.AddRule(&nftables.Rule{
+				Table:    table,
+				Chain:    natPreroutingChain,
+				UserData: ip.IP,
+				Exprs: firewall.Expressions(
+					firewall.DestinationAddress(p.ExternalIP),
+					firewall.Protocol(p.Protocol),
+					firewall.DestinationPort(p.ExternalPort),
+					firewall.DestinationNAT(ip.IP, p.InternalPort),
+				),
+			})
+
+			// redirecting requests from other namespaces attached to the same bridge (loop).
+			c.AddRule(&nftables.Rule{
+				Table:    table,
+				Chain:    natPostroutingChain,
+				UserData: ip.IP,
+				Exprs: firewall.Expressions(
+					firewall.OutgoingInterface(bridge),
+					firewall.SourceNetwork(ip),
+					firewall.NotSourceAddress(hostIP),
+					firewall.DestinationAddress(ip.IP),
+					firewall.Protocol(p.Protocol),
+					firewall.DestinationPort(p.InternalPort),
+					firewall.Masquerade(),
+				),
+			})
+		}
+	}
 
 	return errors.WithStack(c.Flush())
 }

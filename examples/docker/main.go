@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 
@@ -53,6 +54,15 @@ func main() {
 			Name:  "my-container",
 			Image: "grafana/grafana",
 			Tag:   "sha256:1caf984a3f2e07ea4f5ffd25c16fad0ed0ddac043467e8b9ddaf4cbbc6299ec4",
+			ExposedPorts: []scenarios.ExposedPort{
+				{
+					Protocol:      "tcp",
+					HostIP:        net.IPv4zero,
+					HostPort:      80,
+					ContainerPort: 3000,
+					Public:        true,
+				},
+			},
 		})
 	})
 }

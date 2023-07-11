@@ -1,6 +1,8 @@
 package isolator
 
 import (
+	"net"
+
 	"github.com/outofforest/isolator/wire"
 )
 
@@ -16,6 +18,18 @@ type Config struct {
 	// Directory where root filesystem exists.
 	Dir string
 
+	// ExposedPorts is the list of ports to expose.
+	ExposedPorts []ExposedPort
+
 	// Executor stores configuration passed to executor.
 	Executor wire.Config
+}
+
+// ExposedPort defines a port to be exposed from the namespace.
+type ExposedPort struct {
+	Protocol     string
+	ExternalIP   net.IP
+	ExternalPort uint16
+	InternalPort uint16
+	Public       bool
 }

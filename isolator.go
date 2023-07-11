@@ -124,7 +124,18 @@ func Run(ctx context.Context, config Config, clientFunc ClientFunc) error {
 						case <-ctx.Done():
 							return errors.WithStack(ctx.Err())
 						case pid := <-startedCh:
-							clean, err := network.Join(config.Executor.IP, pid)
+							exposedPorts := make([]network.ExposedPort, 0, len(config.ExposedPorts))
+							for _, p := range config.ExposedPorts {
+								exposedPorts = append(exposedPorts, network.ExposedPort{
+									Protocol:     p.Protocol,
+									ExternalIP:   p.ExternalIP,
+									ExternalPort: p.ExternalPort,
+									InternalPort: p.InternalPort,
+									Public:       p.Public,
+								})
+							}
+
+							clean, err := network.Join(config.Executor.IP, exposedPorts, pid)
 							if err != nil {
 								return err
 							}

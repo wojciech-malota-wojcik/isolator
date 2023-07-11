@@ -55,6 +55,9 @@ type Container struct {
 
 	// Hosts is the list of hosts and their IP addresses to resolve inside namespace.
 	Hosts map[string]net.IP
+
+	// ExposedPorts is the list of ports to expose.
+	ExposedPorts []ExposedPort
 }
 
 // Mount defines the mount to be configured inside container.
@@ -62,6 +65,15 @@ type Mount struct {
 	Host      string
 	Container string
 	Writable  bool
+}
+
+// ExposedPort defines a port to be exposed from the container.
+type ExposedPort struct {
+	Protocol      string
+	HostIP        net.IP
+	HostPort      uint16
+	ContainerPort uint16
+	Public        bool
 }
 
 // RunContainerConfig is the config for running containers.
@@ -72,6 +84,13 @@ type RunContainerConfig struct {
 
 // RunContainers run containers.
 func RunContainers(ctx context.Context, config RunContainerConfig, containers ...Container) error {
+	containerHosts := map[string]net.IP{}
+	for _, c := range containers {
+		if c.Name != "" && c.IP != nil {
+			containerHosts[c.Name] = c.IP.IP
+		}
+	}
+
 	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
 		parentSpawn := spawn
 
@@ -165,6 +184,14 @@ func RunContainers(ctx context.Context, config RunContainerConfig, containers ..
 							}
 
 							parentSpawn(fmt.Sprintf("container-%s", c.Name), parallel.Fail, func(ctx context.Context) error {
+								hosts := map[string]net.IP{}
+								for h, ip := range c.Hosts {
+									hosts[h] = ip
+								}
+								for h, ip := range containerHosts {
+									hosts[h] = ip
+								}
+
 								config := isolator.Config{
 									Dir: containerDir,
 									Types: []interface{}{
@@ -175,7 +202,7 @@ func RunContainers(ctx context.Context, config RunContainerConfig, containers ..
 										IP:              c.IP,
 										Hostname:        c.Name,
 										DNS:             c.DNS,
-										Hosts:           c.Hosts,
+										Hosts:           hosts,
 										ConfigureSystem: true,
 										Mounts: []wire.Mount{
 											{
@@ -185,6 +212,16 @@ func RunContainers(ctx context.Context, config RunContainerConfig, containers ..
 											},
 										},
 									},
+								}
+
+								for _, p := range c.ExposedPorts {
+									config.ExposedPorts = append(config.ExposedPorts, isolator.ExposedPort{
+										Protocol:     p.Protocol,
+										ExternalIP:   p.HostIP,
+										ExternalPort: p.HostPort,
+										InternalPort: p.ContainerPort,
+										Public:       p.Public,
+									})
 								}
 
 								for _, m := range c.Mounts {
