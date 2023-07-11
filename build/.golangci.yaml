@@ -73,6 +73,7 @@ linters:
     - musttag
     - nosnakecase
     - golint
+    - maintidx
 
 linters-settings:
   nakedret:
