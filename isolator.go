@@ -40,10 +40,15 @@ func Run(ctx context.Context, config Config, clientFunc ClientFunc) error {
 		incoming := make(chan interface{})
 		outgoing := make(chan interface{})
 
+		cmd := newExecutorServerCommand(config)
+		cmd.Stdout = outPipe
+		cmd.Stdin = inPipe
+		cmd.Stderr = os.Stderr
+
 		spawn("server", parallel.Fail, func(ctx context.Context) error {
 			defer func() {
-				_ = outPipe.Close()
 				_ = inPipe.Close()
+				_ = outPipe.Close()
 			}()
 
 			select {
@@ -56,43 +61,24 @@ func Run(ctx context.Context, config Config, clientFunc ClientFunc) error {
 				return errors.WithStack(err)
 			}
 
-			cmd := newExecutorServerCommand(config)
-			cmd.Stdout = outPipe
-			cmd.Stdin = inPipe
-			cmd.Stderr = os.Stderr
-
 			if err := cmd.Start(); err != nil {
 				return errors.WithStack(err)
 			}
 
 			startedCh <- cmd.Process.Pid
 
-			return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
-				spawn("watchdog", parallel.Fail, func(ctx context.Context) error {
-					<-ctx.Done()
-					_ = cmd.Process.Signal(syscall.SIGTERM)
-					_ = cmd.Process.Signal(syscall.SIGINT)
-					return errors.WithStack(ctx.Err())
-				})
-				spawn("command", parallel.Fail, func(ctx context.Context) error {
-					// cmd.Wait() called inside libexec does not return until stdin, stdout and stderr are fully processed,
-					// that's why cmd.Process.Wait is used inside the implementation below. Otherwise, cmd never exits.
-					_, err := cmd.Process.Wait()
-					if ctx.Err() != nil {
-						return errors.WithStack(ctx.Err())
-					}
-					if err != nil {
-						return errors.WithStack(cmdError{Err: err, Debug: cmd.String()})
-					}
-					return nil
-				})
-				return nil
-			})
+			// cmd.Wait() called inside libexec does not return until stdin, stdout and stderr are fully processed,
+			// that's why cmd.Process.Wait is used inside the implementation below. Otherwise, cmd never exits.
+			_, err := cmd.Process.Wait()
+			if err != nil && ctx.Err() != nil {
+				return errors.WithStack(cmdError{Err: err, Debug: cmd.String()})
+			}
+			return errors.WithStack(ctx.Err())
 		})
 		spawn("watchdog", parallel.Fail, func(ctx context.Context) error {
 			<-ctx.Done()
 
-			_ = outPipe.Close()
+			// server should exit when its stdin is closed, that's why we don't need to send signals here
 			_ = inPipe.Close()
 
 			return errors.WithStack(ctx.Err())
