@@ -87,7 +87,7 @@ func IncomingInterface(iface string) []expr.Any {
 	}
 }
 
-// Outgoing interface filters outgoing interface.
+// OutgoingInterface filters outgoing interface.
 func OutgoingInterface(iface string) []expr.Any {
 	return []expr.Any{
 		&expr.Meta{Key: expr.MetaKeyOIFNAME, Register: 1},
@@ -115,7 +115,7 @@ func LocalSourceAddress() []expr.Any {
 	}
 }
 
-// SourceNetwork filters traffic comming from network.
+// SourceNetwork filters traffic coming from network.
 func SourceNetwork(network *net.IPNet) []expr.Any {
 	if network.IP.Equal(net.IPv4zero) {
 		return nil

@@ -147,7 +147,6 @@ func Run(ctx context.Context, config Config, clientFunc ClientFunc) error {
 									log.Error("Cleaning network setup failed", zap.Error(err))
 								}
 							}()
-
 						}
 					}
 
