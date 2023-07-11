@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"github.com/google/nftables"
-	"github.com/google/nftables/binaryutil"
 	"github.com/pkg/errors"
 	"github.com/vishvananda/netlink"
 
@@ -540,7 +539,6 @@ func configureFirewall(ip *net.IPNet, exposedPorts []ExposedPort) error {
 				),
 			})
 		}
-
 	}
 
 	return errors.WithStack(c.Flush())
@@ -614,11 +612,6 @@ func firstIP(network *net.IPNet) net.IP {
 func netIP(network *net.IPNet) net.IP {
 	ones, bits := network.Mask.Size()
 	return uint32ToIP4(ip4ToUint32(network.IP) & (uint32(math.MaxUint32) << (bits - ones)))
-}
-
-func ipMask(ip *net.IPNet) []byte {
-	ones, bits := ip.Mask.Size()
-	return binaryutil.BigEndian.PutUint32(math.MaxUint32 << (bits - ones))
 }
 
 func bridgeName(ip *net.IPNet) string {

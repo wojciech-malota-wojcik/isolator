@@ -10,6 +10,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// Expressions combines expressions into a single list.
 func Expressions(exprs ...[]expr.Any) []expr.Any {
 	res := []expr.Any{}
 
@@ -20,6 +21,7 @@ func Expressions(exprs ...[]expr.Any) []expr.Any {
 	return res
 }
 
+// Accept accepts packets.
 func Accept() []expr.Any {
 	return []expr.Any{
 		&expr.Counter{},
@@ -29,6 +31,7 @@ func Accept() []expr.Any {
 	}
 }
 
+// Masquerade masquerades packets.
 func Masquerade() []expr.Any {
 	return []expr.Any{
 		&expr.Counter{},
@@ -36,6 +39,7 @@ func Masquerade() []expr.Any {
 	}
 }
 
+// DestinationNAT redirects packets to IP and port.
 func DestinationNAT(ip net.IP, port uint16) []expr.Any {
 	return []expr.Any{
 		&expr.Immediate{
@@ -56,6 +60,7 @@ func DestinationNAT(ip net.IP, port uint16) []expr.Any {
 	}
 }
 
+// ConnectionEstablished filters established connections.
 func ConnectionEstablished() []expr.Any {
 	return []expr.Any{
 		&expr.Ct{Register: 1, SourceRegister: false, Key: expr.CtKeySTATE},
@@ -70,6 +75,7 @@ func ConnectionEstablished() []expr.Any {
 	}
 }
 
+// IncomingInterface filters incoming interface.
 func IncomingInterface(iface string) []expr.Any {
 	return []expr.Any{
 		&expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
@@ -81,6 +87,7 @@ func IncomingInterface(iface string) []expr.Any {
 	}
 }
 
+// Outgoing interface filters outgoing interface.
 func OutgoingInterface(iface string) []expr.Any {
 	return []expr.Any{
 		&expr.Meta{Key: expr.MetaKeyOIFNAME, Register: 1},
@@ -92,6 +99,7 @@ func OutgoingInterface(iface string) []expr.Any {
 	}
 }
 
+// LocalSourceAddress filters local source addresses.
 func LocalSourceAddress() []expr.Any {
 	return []expr.Any{
 		&expr.Fib{
@@ -107,6 +115,7 @@ func LocalSourceAddress() []expr.Any {
 	}
 }
 
+// SourceNetwork filters traffic comming from network.
 func SourceNetwork(network *net.IPNet) []expr.Any {
 	if network.IP.Equal(net.IPv4zero) {
 		return nil
@@ -134,6 +143,7 @@ func SourceNetwork(network *net.IPNet) []expr.Any {
 	}
 }
 
+// NotSourceAddress filters out packets coming from IP.
 func NotSourceAddress(ip net.IP) []expr.Any {
 	if ip.Equal(net.IPv4zero) {
 		return nil
@@ -154,6 +164,7 @@ func NotSourceAddress(ip net.IP) []expr.Any {
 	}
 }
 
+// DestinationAddress filters destination address.
 func DestinationAddress(ip net.IP) []expr.Any {
 	if ip.Equal(net.IPv4zero) {
 		return nil
@@ -174,6 +185,7 @@ func DestinationAddress(ip net.IP) []expr.Any {
 	}
 }
 
+// Protocol filters protocol.
 func Protocol(protocol string) []expr.Any {
 	var proto byte
 	switch protocol {
@@ -195,6 +207,7 @@ func Protocol(protocol string) []expr.Any {
 	}
 }
 
+// DestinationPort filters destination port.
 func DestinationPort(port uint16) []expr.Any {
 	return []expr.Any{
 		&expr.Payload{
