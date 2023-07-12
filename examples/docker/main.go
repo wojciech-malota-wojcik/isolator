@@ -46,7 +46,7 @@ func main() {
 			}
 		}()
 
-		return scenarios.RunContainers(ctx, scenarios.RunContainerConfig{
+		return scenarios.RunApps(ctx, scenarios.RunAppsConfig{
 			CacheDir:     cacheDir,
 			ContainerDir: containerDir,
 		}, scenarios.Container{

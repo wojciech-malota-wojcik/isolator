@@ -9,10 +9,13 @@ import (
 	"github.com/pkg/errors"
 )
 
+// Func is the function containing a logic of the task.
+type Func func(ctx context.Context) error
+
 // Task is the task to execute in the reactor.
 type Task struct {
 	ID string
-	Do func(ctx context.Context) error
+	Do Func
 }
 
 // SourceFunc is a function producing tasks.
