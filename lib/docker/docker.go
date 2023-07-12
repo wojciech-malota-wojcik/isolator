@@ -232,7 +232,6 @@ func (c *imageClient) Inflate(ctx context.Context) error {
 					if strings.HasPrefix(t.ID, "docker:config:") {
 						configDone = true
 					} else {
-
 						completed[t.ID] = t
 
 						for len(layers) > 0 {
