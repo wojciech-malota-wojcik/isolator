@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/outofforest/logger"
 	"github.com/outofforest/parallel"
@@ -32,7 +33,9 @@ func Run(ctx context.Context, config Config, clientFunc ClientFunc) error {
 
 	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
 		startCh := make(chan struct{})
-		startedCh := make(chan int, 1)
+		startedCh := make(chan struct{})
+		exitedCh := make(chan struct{})
+		cmdPIDCh := make(chan int, 1)
 
 		outPipe := newPipe()
 		inPipe := newPipe()
@@ -65,7 +68,9 @@ func Run(ctx context.Context, config Config, clientFunc ClientFunc) error {
 				return errors.WithStack(err)
 			}
 
-			startedCh <- cmd.Process.Pid
+			cmdPIDCh <- cmd.Process.Pid
+			close(startedCh)
+			defer close(exitedCh)
 
 			// cmd.Wait() called inside libexec does not return until stdin, stdout and stderr are fully processed,
 			// that's why cmd.Process.Wait is used inside the implementation below. Otherwise, cmd never exits.
@@ -78,10 +83,25 @@ func Run(ctx context.Context, config Config, clientFunc ClientFunc) error {
 		spawn("watchdog", parallel.Fail, func(ctx context.Context) error {
 			<-ctx.Done()
 
-			// server should exit when its stdin is closed, that's why we don't need to send signals here
 			_ = inPipe.Close()
+			timeout := time.After(time.Minute)
 
-			return errors.WithStack(ctx.Err())
+			select {
+			case <-startedCh:
+				for {
+					select {
+					case <-exitedCh:
+						return errors.WithStack(ctx.Err())
+					case <-timeout:
+						_ = cmd.Process.Signal(unix.SIGKILL)
+					case <-time.After(100 * time.Millisecond):
+						_ = cmd.Process.Signal(unix.SIGTERM)
+						_ = cmd.Process.Signal(unix.SIGINT)
+					}
+				}
+			default:
+				return errors.WithStack(ctx.Err())
+			}
 		})
 		spawn("sender", parallel.Fail, func(ctx context.Context) (retErr error) {
 			log := logger.Get(ctx)
@@ -109,7 +129,7 @@ func Run(ctx context.Context, config Config, clientFunc ClientFunc) error {
 						select {
 						case <-ctx.Done():
 							return errors.WithStack(ctx.Err())
-						case pid := <-startedCh:
+						case pid := <-cmdPIDCh:
 							exposedPorts := make([]network.ExposedPort, 0, len(config.ExposedPorts))
 							for _, p := range config.ExposedPorts {
 								exposedPorts = append(exposedPorts, network.ExposedPort{
