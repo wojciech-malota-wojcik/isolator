@@ -12,8 +12,8 @@ import (
 
 // RunAppsConfig is the config for running applications.
 type RunAppsConfig struct {
-	CacheDir     string
-	ContainerDir string
+	CacheDir string
+	AppsDir  string
 }
 
 // Application represents an app to run in isolation.

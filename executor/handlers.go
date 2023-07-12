@@ -7,6 +7,8 @@ import (
 	"github.com/outofforest/libexec"
 	"github.com/outofforest/logger"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 
 	"github.com/outofforest/isolator/lib/docker"
 	"github.com/outofforest/isolator/lib/libhttp"
@@ -67,6 +69,26 @@ func RunDockerContainerHandler(ctx context.Context, content interface{}, encode 
 		StdOut: stdOut,
 		StdErr: stdErr,
 	})
+}
+
+// EmbeddedFunc defines embedded function.
+type EmbeddedFunc func(ctx context.Context, args []string) error
+
+// NewRunEmbeddedFunctionHandler returns new handler running embedded function.
+func NewRunEmbeddedFunctionHandler(funcs map[string]EmbeddedFunc) HandlerFunc {
+	return func(ctx context.Context, content interface{}, encode wire.EncoderFunc) error {
+		m, ok := content.(wire.RunEmbeddedFunction)
+		if !ok {
+			return errors.Errorf("unexpected type %T", content)
+		}
+
+		fn, exists := funcs[m.Name]
+		if !exists {
+			return errors.Errorf("embedded function %s does not exist", m.Name)
+		}
+
+		return fn(zapTransmitter(ctx, encode), m.Args)
+	}
 }
 
 // ExecuteHandler is a standard handler handling Execute command.
@@ -132,4 +154,24 @@ func (lt *logTransmitter) Flush() error {
 	}
 	lt.buf = make([]byte, 0, len(lt.buf))
 	return nil
+}
+
+func (lt *logTransmitter) Sync() error {
+	return lt.Flush()
+}
+
+func zapTransmitter(ctx context.Context, encode wire.EncoderFunc) context.Context {
+	transmitter := &logTransmitter{
+		Stream: wire.StreamErr,
+		Encode: encode,
+	}
+
+	transmitCore := zapcore.NewCore(zapcore.NewJSONEncoder(logger.EncoderConfig), transmitter, zap.NewAtomicLevelAt(zap.DebugLevel))
+
+	log := logger.Get(ctx)
+	log = log.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+		return zapcore.NewTee(core, transmitCore)
+	}))
+
+	return logger.WithLogger(ctx, log)
 }

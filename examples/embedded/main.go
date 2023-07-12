@@ -2,14 +2,11 @@ package main
 
 import (
 	"context"
-	"net"
 	"os"
-	"path/filepath"
 
 	"github.com/outofforest/logger"
 	"github.com/outofforest/run"
 	"github.com/pkg/errors"
-	"github.com/ridge/must"
 	"go.uber.org/zap"
 
 	"github.com/outofforest/isolator/executor"
@@ -22,12 +19,25 @@ func main() {
 	run.New().WithFlavour(executor.NewFlavour(executor.Config{
 		// Define commands recognized by the executor server.
 		Router: executor.NewRouter().
-			RegisterHandler(wire.InflateDockerImage{}, executor.NewInflateDockerImageHandler()).
-			RegisterHandler(wire.RunDockerContainer{}, executor.RunDockerContainerHandler),
+			RegisterHandler(wire.RunEmbeddedFunction{}, executor.NewRunEmbeddedFunctionHandler(
+				map[string]executor.EmbeddedFunc{
+					"test1": func(ctx context.Context, args []string) error {
+						logger.Get(ctx).Info("Test1", zap.String("arg", args[0]))
+						<-ctx.Done()
+						return errors.WithStack(ctx.Err())
+					},
+					"test2": func(ctx context.Context, args []string) error {
+						logger.Get(ctx).Info("Test2",
+							zap.String("arg0", args[0]),
+							zap.String("arg1", args[1]))
+						<-ctx.Done()
+						return errors.WithStack(ctx.Err())
+					},
+				},
+			)),
 	})).Run("example", func(ctx context.Context) (retErr error) {
 		log := logger.Get(ctx)
-		appDir := "/tmp/example-docker"
-		cacheDir := filepath.Join(must.String(os.UserCacheDir()), "docker-cache")
+		appDir := "/tmp/example-embedded"
 
 		if err := os.RemoveAll(appDir); err != nil && !os.IsNotExist(err) {
 			return errors.WithStack(err)
@@ -47,22 +57,15 @@ func main() {
 		}()
 
 		return scenarios.RunApps(ctx, scenarios.RunAppsConfig{
-			CacheDir: cacheDir,
-			AppsDir:  appDir,
-		}, scenarios.Container{
-			IP:    network.Addr(appNetwork, 2),
-			Name:  "my-container",
-			Image: "grafana/grafana",
-			Tag:   "sha256:1caf984a3f2e07ea4f5ffd25c16fad0ed0ddac043467e8b9ddaf4cbbc6299ec4",
-			ExposedPorts: []scenarios.ExposedPort{
-				{
-					Protocol:      "tcp",
-					HostIP:        net.IPv4zero,
-					HostPort:      80,
-					NamespacePort: 3000,
-					Public:        true,
-				},
-			},
+			AppsDir: appDir,
+		}, scenarios.Embedded{
+			IP:   network.Addr(appNetwork, 2),
+			Name: "test1",
+			Args: []string{"value"},
+		}, scenarios.Embedded{
+			IP:   network.Addr(appNetwork, 3),
+			Name: "test2",
+			Args: []string{"value0", "value1"},
 		})
 	})
 }

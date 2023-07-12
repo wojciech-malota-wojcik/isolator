@@ -75,34 +75,35 @@ func (c Container) GetIP() net.IP {
 // GetTaskFunc returns task function running the container.
 func (c Container) GetTaskFunc(config RunAppsConfig, appHosts map[string]net.IP, spawn parallel.SpawnFn) task.Func {
 	return func(ctx context.Context) error {
-		ctx = logger.With(ctx, zap.String("container", c.Name))
+		ctx = logger.With(ctx, zap.String("appName", c.Name))
 
 		if err := os.MkdirAll(config.CacheDir, 0o700); err != nil {
 			return errors.WithStack(err)
 		}
 
-		if err := os.MkdirAll(config.ContainerDir, 0o700); err != nil {
+		if err := os.MkdirAll(config.AppsDir, 0o700); err != nil {
 			return errors.WithStack(err)
 		}
-		containerDir := filepath.Join(config.ContainerDir, c.Name)
+		appDir := filepath.Join(config.AppsDir, c.Name)
 		// 0o755 mode is essential here. Without this, container running as non-root user will
 		// fail with "permission denied"
-		if err := os.Mkdir(containerDir, 0o755); err != nil {
+		if err := os.Mkdir(appDir, 0o755); err != nil {
 			return errors.WithStack(err)
 		}
 
-		if err := inflateDockerImage(ctx, config, c, containerDir); err != nil {
+		if err := c.inflate(ctx, config, appDir); err != nil {
 			return err
 		}
 
 		spawn(c.Name, parallel.Fail, func(ctx context.Context) error {
-			return runContainer(ctx, config, c, containerDir, appHosts)
+			ctx = logger.With(ctx, zap.String("appName", c.Name))
+			return c.run(ctx, config, appDir, appHosts)
 		})
 		return nil
 	}
 }
 
-func inflateDockerImage(ctx context.Context, config RunAppsConfig, c Container, containerDir string) (retErr error) {
+func (c Container) inflate(ctx context.Context, config RunAppsConfig, appDir string) (retErr error) {
 	ctx = logger.With(ctx, zap.String("container", c.Name))
 	log := logger.Get(ctx)
 
@@ -120,7 +121,7 @@ func inflateDockerImage(ctx context.Context, config RunAppsConfig, c Container, 
 	}()
 
 	return isolator.Run(ctx, isolator.Config{
-		Dir: containerDir,
+		Dir: appDir,
 		Types: []interface{}{
 			wire.Result{},
 		},
@@ -130,7 +131,7 @@ func inflateDockerImage(ctx context.Context, config RunAppsConfig, c Container, 
 			Mounts: []wire.Mount{
 				{
 					Host:      config.CacheDir,
-					Container: "/.cache",
+					Namespace: "/.cache",
 					Writable:  true,
 				},
 			},
@@ -167,7 +168,7 @@ func inflateDockerImage(ctx context.Context, config RunAppsConfig, c Container, 
 	})
 }
 
-func runContainer(ctx context.Context, config RunAppsConfig, c Container, containerDir string, appHosts map[string]net.IP) error {
+func (c Container) run(ctx context.Context, config RunAppsConfig, appDir string, appHosts map[string]net.IP) error {
 	hosts := map[string]net.IP{}
 	for h, ip := range c.Hosts {
 		hosts[h] = ip
@@ -177,7 +178,7 @@ func runContainer(ctx context.Context, config RunAppsConfig, c Container, contai
 	}
 
 	runConfig := isolator.Config{
-		Dir: containerDir,
+		Dir: appDir,
 		Types: []interface{}{
 			wire.Log{},
 			wire.Result{},
@@ -191,7 +192,7 @@ func runContainer(ctx context.Context, config RunAppsConfig, c Container, contai
 			Mounts: []wire.Mount{
 				{
 					Host:      config.CacheDir,
-					Container: "/.cache",
+					Namespace: "/.cache",
 					Writable:  true,
 				},
 			},
@@ -203,7 +204,7 @@ func runContainer(ctx context.Context, config RunAppsConfig, c Container, contai
 			Protocol:     p.Protocol,
 			ExternalIP:   p.HostIP,
 			ExternalPort: p.HostPort,
-			InternalPort: p.ContainerPort,
+			InternalPort: p.NamespacePort,
 			Public:       p.Public,
 		})
 	}
@@ -211,7 +212,7 @@ func runContainer(ctx context.Context, config RunAppsConfig, c Container, contai
 	for _, m := range c.Mounts {
 		runConfig.Executor.Mounts = append(runConfig.Executor.Mounts, wire.Mount{
 			Host:      m.Host,
-			Container: m.Container,
+			Namespace: m.Namespace,
 			Writable:  m.Writable,
 		})
 	}

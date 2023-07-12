@@ -115,6 +115,22 @@ func LocalSourceAddress() []expr.Any {
 	}
 }
 
+// LocalDestinationAddress filters local destination addresses.
+func LocalDestinationAddress() []expr.Any {
+	return []expr.Any{
+		&expr.Fib{
+			Register:       1,
+			FlagDADDR:      true,
+			ResultADDRTYPE: true,
+		},
+		&expr.Cmp{
+			Op:       expr.CmpOpEq,
+			Register: 1,
+			Data:     binaryutil.NativeEndian.PutUint32(2),
+		},
+	}
+}
+
 // SourceNetwork filters traffic coming from network.
 func SourceNetwork(network *net.IPNet) []expr.Any {
 	if network.IP.Equal(net.IPv4zero) {
