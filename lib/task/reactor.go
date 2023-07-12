@@ -27,7 +27,7 @@ func Run(ctx context.Context, doneCh chan Task, sourceFunc SourceFunc) error {
 	defer log.Info("Task reactor terminated")
 
 	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
-		taskCh := make(chan Task)
+		taskCh := make(chan Task, 1000)
 
 		spawn("source", parallel.Continue, func(ctx context.Context) error {
 			defer close(taskCh)
@@ -46,7 +46,7 @@ func Run(ctx context.Context, doneCh chan Task, sourceFunc SourceFunc) error {
 						}
 
 						if err := t.Do(ctx); err != nil {
-							return errors.WithStack(ctx.Err())
+							return err
 						}
 
 						if doneCh == nil {

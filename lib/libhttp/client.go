@@ -20,7 +20,7 @@ func NewSelfClient() *http.Client {
 			PreferGo: true,
 			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 				d := net.Dialer{
-					Timeout: time.Millisecond * time.Duration(2000),
+					Timeout: 2 * time.Second,
 				}
 				return d.DialContext(ctx, network, "8.8.8.8:53")
 			},

@@ -85,6 +85,10 @@ func main() {
 						Host:      "/lib64",
 						Container: "/lib64",
 					},
+					{
+						Host:      "/etc/pki/tls/certs/ca-bundle.crt",
+						Container: "/etc/pki/tls/certs/ca-bundle.crt",
+					},
 				},
 			},
 		}
@@ -99,7 +103,7 @@ func main() {
 			select {
 			case <-ctx.Done():
 				return errors.WithStack(ctx.Err())
-			case outgoing <- wire.Execute{Command: `hostname && ip a && ip r && ping isolated-machine`}:
+			case outgoing <- wire.Execute{Command: `hostname && ip a && ip r && curl https://google.com`}:
 			}
 
 			// Communication channel loop

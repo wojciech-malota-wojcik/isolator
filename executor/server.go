@@ -37,7 +37,7 @@ func runServer(ctx context.Context, config Config, rootDir string) error {
 
 			content, err := decode()
 			if err != nil {
-				return errors.WithStack(fmt.Errorf("fetching configuration failed: %w", err))
+				return err
 			}
 			runtimeConfig, ok := content.(wire.Config)
 			if !ok {
@@ -45,7 +45,7 @@ func runServer(ctx context.Context, config Config, rootDir string) error {
 			}
 
 			if err := prepareNewRoot(rootDir); err != nil {
-				return errors.WithStack(fmt.Errorf("preparing new root filesystem failed: %w", err))
+				return err
 			}
 
 			if runtimeConfig.ConfigureSystem {
@@ -71,11 +71,11 @@ func runServer(ctx context.Context, config Config, rootDir string) error {
 			}
 
 			if err := applyMounts(runtimeConfig.Mounts); err != nil {
-				return errors.WithStack(fmt.Errorf("mounting host directories failed: %w", err))
+				return err
 			}
 
 			if err := pivotRoot(); err != nil {
-				return errors.WithStack(fmt.Errorf("pivoting root filesystem failed: %w", err))
+				return err
 			}
 
 			if runtimeConfig.Hostname != "" {
@@ -101,7 +101,7 @@ func runServer(ctx context.Context, config Config, rootDir string) error {
 						if ctx.Err() != nil || errors.Is(err, io.EOF) {
 							return errors.WithStack(ctx.Err())
 						}
-						return errors.WithStack(fmt.Errorf("receiving message failed: %w", err))
+						return err
 					}
 
 					handler, err := config.Router.Handler(content)
@@ -117,7 +117,7 @@ func runServer(ctx context.Context, config Config, rootDir string) error {
 					if err := encode(wire.Result{
 						Error: errStr,
 					}); err != nil {
-						return errors.WithStack(fmt.Errorf("command status reporting failed: %w", err))
+						return err
 					}
 				}
 			})
@@ -129,12 +129,12 @@ func runServer(ctx context.Context, config Config, rootDir string) error {
 func prepareNewRoot(rootDir string) error {
 	// systemd remounts everything as MS_SHARED, to prevent mess let's remount everything back to MS_PRIVATE inside namespace
 	if err := syscall.Mount("", "/", "", syscall.MS_SLAVE|syscall.MS_REC, ""); err != nil {
-		return errors.WithStack(fmt.Errorf("remounting / as slave failed: %w", err))
+		return errors.WithStack(err)
 	}
 
 	// PivotRoot requires new root to be on different mountpoint, so let's bind it to itself
 	if err := syscall.Mount(rootDir, rootDir, "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
-		return errors.WithStack(fmt.Errorf("binding new root to itself failed: %w", err))
+		return errors.WithStack(err)
 	}
 
 	// Let's assume that new filesystem is the current working dir even before pivoting to make life easier
@@ -146,7 +146,7 @@ func mountProc(target string) error {
 		return errors.WithStack(err)
 	}
 	if err := syscall.Mount("none", target, "proc", 0, ""); err != nil {
-		return errors.WithStack(fmt.Errorf("mounting proc failed: %w", err))
+		return errors.WithStack(err)
 	}
 	return nil
 }
@@ -158,7 +158,7 @@ func mountTmp() error {
 		return errors.WithStack(err)
 	}
 	if err := syscall.Mount("none", targetDir, "tmpfs", 0, ""); err != nil {
-		return errors.WithStack(fmt.Errorf("mounting tmp failed: %w", err))
+		return errors.WithStack(err)
 	}
 	return nil
 }
@@ -169,20 +169,20 @@ func populateDev() error {
 		return errors.WithStack(err)
 	}
 	if err := syscall.Mount("none", devDir, "tmpfs", 0, ""); err != nil {
-		return errors.WithStack(fmt.Errorf("mounting tmpfs for dev failed: %w", err))
+		return errors.WithStack(err)
 	}
 	for _, dev := range []string{"console", "null", "zero", "random", "urandom"} {
 		devPath := filepath.Join(devDir, dev)
 
 		f, err := os.OpenFile(devPath, os.O_CREATE|os.O_RDONLY, 0o644)
 		if err != nil {
-			return errors.WithStack(fmt.Errorf("creating dev/%s file failed: %w", dev, err))
+			return errors.WithStack(err)
 		}
 		if err := f.Close(); err != nil {
-			return errors.WithStack(fmt.Errorf("closing dev/%s file failed: %w", dev, err))
+			return errors.WithStack(err)
 		}
 		if err := syscall.Mount(filepath.Join("/", devPath), devPath, "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
-			return errors.WithStack(fmt.Errorf("binding dev/%s device failed: %w", dev, err))
+			return errors.WithStack(err)
 		}
 	}
 	links := map[string]string{
@@ -212,23 +212,33 @@ func applyMounts(mounts []wire.Mount) error {
 			return errors.WithStack(err)
 		}
 		if info.IsDir() {
-			if err := os.MkdirAll(m.Container, 0o700); err != nil && !os.IsExist(err) {
+			if err := os.MkdirAll(m.Container, 0o700); err != nil {
 				return errors.WithStack(err)
 			}
 		} else {
-			if err := os.MkdirAll(filepath.Dir(m.Container), 0o700); err != nil && !os.IsExist(err) {
+			if err := os.MkdirAll(filepath.Dir(m.Container), 0o700); err != nil {
 				return errors.WithStack(err)
 			}
-			if err := os.WriteFile(m.Container, nil, info.Mode()); err != nil {
-				return errors.WithStack(err)
+			err := func() error {
+				f, err := os.OpenFile(m.Container, os.O_CREATE|os.O_WRONLY|os.O_EXCL, info.Mode())
+				if err != nil {
+					if os.IsExist(err) {
+						return nil
+					}
+					return errors.WithStack(err)
+				}
+				return errors.WithStack(f.Close())
+			}()
+			if err != nil {
+				return err
 			}
 		}
 		if err := syscall.Mount(m.Host, m.Container, "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
-			return errors.WithStack(fmt.Errorf("mounting %s to %s failed: %w", m.Host, m.Container, err))
+			return errors.WithStack(err)
 		}
 		if !m.Writable {
 			if err := syscall.Mount(m.Host, m.Container, "", syscall.MS_BIND|syscall.MS_PRIVATE|syscall.MS_REMOUNT|syscall.MS_RDONLY, ""); err != nil {
-				return errors.WithStack(fmt.Errorf("remounting readonly %s to %s failed: %w", m.Host, m.Container, err))
+				return errors.WithStack(err)
 			}
 		}
 	}
@@ -240,13 +250,13 @@ func pivotRoot() error {
 		return errors.WithStack(err)
 	}
 	if err := syscall.PivotRoot(".", ".old"); err != nil {
-		return errors.WithStack(fmt.Errorf("pivoting / failed: %w", err))
+		return errors.WithStack(err)
 	}
 	if err := syscall.Mount("", ".old", "", syscall.MS_PRIVATE|syscall.MS_REC, ""); err != nil {
-		return errors.WithStack(fmt.Errorf("remounting .old as private failed: %w", err))
+		return errors.WithStack(err)
 	}
 	if err := syscall.Unmount(".old", syscall.MNT_DETACH); err != nil {
-		return errors.WithStack(fmt.Errorf("unmounting .old failed: %w", err))
+		return errors.WithStack(err)
 	}
 	return errors.WithStack(os.Remove(".old"))
 }

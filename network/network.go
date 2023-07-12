@@ -51,7 +51,7 @@ func Random(prefix uint8) (*net.IPNet, func() error, error) {
 		return nil, nil, err
 	}
 
-	if err := prepareFirewall(); err != nil {
+	if err := prepareFirewall(network); err != nil {
 		return nil, nil, err
 	}
 
@@ -60,6 +60,9 @@ func Random(prefix uint8) (*net.IPNet, func() error, error) {
 	}
 
 	return network, func() error {
+		mu.Lock()
+		defer mu.Unlock()
+
 		if err := cleanFirewall(network); err != nil {
 			return err
 		}
@@ -122,6 +125,9 @@ func Addr(network *net.IPNet, index uint32) *net.IPNet {
 
 // Join adds container to the network.
 func Join(ip *net.IPNet, exposedPorts []ExposedPort, pid int) (func() error, error) {
+	mu.Lock()
+	defer mu.Unlock()
+
 	link, err := netlink.LinkByName(bridgeName(ip))
 	if err != nil {
 		return nil, errors.WithStack(err)
@@ -168,7 +174,15 @@ func Join(ip *net.IPNet, exposedPorts []ExposedPort, pid int) (func() error, err
 	}
 
 	return func() error {
-		return errors.WithStack(netlink.LinkDel(vethHost))
+		mu.Lock()
+		defer mu.Unlock()
+
+		if err := cleanFirewall(ip); err != nil {
+			return err
+		}
+
+		_ = netlink.LinkDel(vethHost)
+		return nil
 	}, nil
 }
 
@@ -232,7 +246,9 @@ func createBridge(network *net.IPNet) error {
 	return nil
 }
 
-func prepareFirewall() error {
+func prepareFirewall(network *net.IPNet) error {
+	bridge := bridgeName(network)
+	netAddr := netIP(network)
 	c := &nftables.Conn{}
 
 	tables, err := c.ListTables()
@@ -259,19 +275,19 @@ func prepareFirewall() error {
 		return errors.WithStack(err)
 	}
 
-	var inputFilterChain *nftables.Chain
+	var filterInputChain *nftables.Chain
 	for _, ch := range chains {
 		if ch.Table.Name != nftTable {
 			continue
 		}
 		if ch.Name == nftChainFilterInput {
-			inputFilterChain = ch
+			filterInputChain = ch
 			break
 		}
 	}
 
-	if inputFilterChain == nil {
-		inputFilterChain = c.AddChain(&nftables.Chain{
+	if filterInputChain == nil {
+		filterInputChain = c.AddChain(&nftables.Chain{
 			Name:     nftChainFilterInput,
 			Table:    table,
 			Type:     nftables.ChainTypeFilter,
@@ -282,7 +298,7 @@ func prepareFirewall() error {
 
 		c.AddRule(&nftables.Rule{
 			Table: table,
-			Chain: inputFilterChain,
+			Chain: filterInputChain,
 			Exprs: firewall.Expressions(
 				firewall.ConnectionEstablished(),
 				firewall.Accept(),
@@ -290,7 +306,7 @@ func prepareFirewall() error {
 		})
 		c.AddRule(&nftables.Rule{
 			Table: table,
-			Chain: inputFilterChain,
+			Chain: filterInputChain,
 			Exprs: firewall.Expressions(
 				firewall.IncomingInterface("lo"),
 				firewall.LocalSourceAddress(),
@@ -307,7 +323,7 @@ func prepareFirewall() error {
 		Priority: nftables.ChainPriorityFilter,
 		Policy:   &policyAccept,
 	})
-	c.AddChain(&nftables.Chain{
+	filterForwardChain := c.AddChain(&nftables.Chain{
 		Name:     nftChainFilterForward,
 		Table:    table,
 		Type:     nftables.ChainTypeFilter,
@@ -331,13 +347,47 @@ func prepareFirewall() error {
 		Type:     nftables.ChainTypeNAT,
 		Policy:   &policyAccept,
 	})
-	c.AddChain(&nftables.Chain{
+	natPostroutingChain := c.AddChain(&nftables.Chain{
 		Name:     nftChainNATPostrouting,
 		Table:    table,
 		Hooknum:  nftables.ChainHookPostrouting,
 		Priority: nftables.ChainPriorityNATSource,
 		Type:     nftables.ChainTypeNAT,
 		Policy:   &policyAccept,
+	})
+
+	// forward from namespace
+	c.AddRule(&nftables.Rule{
+		Table:    table,
+		Chain:    filterForwardChain,
+		UserData: netAddr,
+		Exprs: firewall.Expressions(
+			firewall.OutgoingInterface(bridge),
+			firewall.ConnectionEstablished(),
+			firewall.Accept(),
+		),
+	})
+
+	// forward to namespace
+	c.AddRule(&nftables.Rule{
+		Table:    filterForwardChain.Table,
+		Chain:    filterForwardChain,
+		UserData: netAddr,
+		Exprs: firewall.Expressions(
+			firewall.IncomingInterface(bridge),
+			firewall.Accept(),
+		),
+	})
+
+	// masquerade namespace
+	c.AddRule(&nftables.Rule{
+		Table:    table,
+		Chain:    natPostroutingChain,
+		UserData: netAddr,
+		Exprs: firewall.Expressions(
+			firewall.IncomingInterface(bridge),
+			firewall.Masquerade(),
+		),
 	})
 
 	return errors.WithStack(c.Flush())
@@ -360,7 +410,8 @@ func deleteBridge(network *net.IPNet) error {
 	bridge := bridgeName(network)
 	for _, l := range links {
 		if l.Attrs().Name == bridge {
-			return errors.WithStack(netlink.LinkDel(l))
+			_ = netlink.LinkDel(l)
+			return nil
 		}
 	}
 
@@ -429,42 +480,6 @@ func configureFirewall(ip *net.IPNet, exposedPorts []ExposedPort) error {
 	}
 
 	bridge := bridgeName(ip)
-	netAddr := netIP(ip)
-
-	// forward from namespace
-	c.AddRule(&nftables.Rule{
-		Table:    table,
-		Chain:    filterForwardChain,
-		UserData: netAddr,
-		Exprs: firewall.Expressions(
-			firewall.OutgoingInterface(bridge),
-			firewall.ConnectionEstablished(),
-			firewall.Accept(),
-		),
-	})
-
-	// forward to namespace
-	c.AddRule(&nftables.Rule{
-		Table:    filterForwardChain.Table,
-		Chain:    filterForwardChain,
-		UserData: netAddr,
-		Exprs: firewall.Expressions(
-			firewall.IncomingInterface(bridge),
-			firewall.Accept(),
-		),
-	})
-
-	// masquerade namespace
-	c.AddRule(&nftables.Rule{
-		Table:    table,
-		Chain:    natPostroutingChain,
-		UserData: netAddr,
-		Exprs: firewall.Expressions(
-			firewall.IncomingInterface(bridge),
-			firewall.Masquerade(),
-		),
-	})
-
 	hostIP := firstIP(ip)
 	for _, p := range exposedPorts {
 		// redirecting requests originating from the host machine
@@ -544,7 +559,7 @@ func configureFirewall(ip *net.IPNet, exposedPorts []ExposedPort) error {
 	return errors.WithStack(c.Flush())
 }
 
-func cleanFirewall(network *net.IPNet) error {
+func cleanFirewall(ip *net.IPNet) error {
 	c := &nftables.Conn{}
 
 	tables, err := c.ListTables()
@@ -569,7 +584,6 @@ func cleanFirewall(network *net.IPNet) error {
 		return errors.WithStack(err)
 	}
 
-	netAddr := netIP(network)
 	for _, ch := range chains {
 		if ch.Table.Name != nftTable {
 			continue
@@ -584,7 +598,7 @@ func cleanFirewall(network *net.IPNet) error {
 			if len(r.UserData) != 4 {
 				continue
 			}
-			if !netIP(&net.IPNet{IP: r.UserData, Mask: network.Mask}).Equal(netAddr) {
+			if !net.IP(r.UserData).Equal(ip.IP) && !netIP(&net.IPNet{IP: r.UserData, Mask: ip.Mask}).Equal(ip.IP) {
 				continue
 			}
 			if err := c.DelRule(r); err != nil {

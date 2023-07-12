@@ -208,7 +208,7 @@ func (c *imageClient) Inflate(ctx context.Context) error {
 				}, layerTasks...) {
 					select {
 					case <-ctx.Done():
-						return errors.WithStack(err)
+						return errors.WithStack(ctx.Err())
 					case taskCh <- t:
 					}
 				}
@@ -219,6 +219,7 @@ func (c *imageClient) Inflate(ctx context.Context) error {
 				layers := m.Layers
 				tasks := layerTasks
 				completed := map[string]task.Task{}
+				configDone := false
 
 				for {
 					var t task.Task
@@ -229,51 +230,51 @@ func (c *imageClient) Inflate(ctx context.Context) error {
 					}
 
 					if strings.HasPrefix(t.ID, "docker:config:") {
-						continue
+						configDone = true
+					} else {
+						completed[t.ID] = t
+
+						for len(layers) > 0 {
+							if _, exists := completed[tasks[0].ID]; !exists {
+								break
+							}
+
+							l := layers[0]
+
+							blobFile := filepath.Join(c.cacheDir, l.Digest+".tgz")
+							log.Info("Inflating blob", zap.String("blobFile", blobFile))
+
+							f, err := os.Open(blobFile)
+							if err != nil {
+								return errors.WithStack(err)
+							}
+							defer f.Close()
+
+							hasher := sha256.New()
+							gr, err := gzip.NewReader(io.TeeReader(f, hasher))
+							if err != nil {
+								return errors.WithStack(err)
+							}
+							defer gr.Close()
+
+							if err := untar(gr); err != nil {
+								return err
+							}
+
+							computedDigest := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
+							if computedDigest != l.Digest {
+								return errors.Errorf("blob digest doesn't match, expected: %s, got: %s", l.Digest, computedDigest)
+							}
+
+							log.Info("Blob inflated", zap.String("blobFile", blobFile))
+
+							layers = layers[1:]
+							tasks = tasks[1:]
+						}
 					}
 
-					completed[t.ID] = t
-
-					for {
-						if _, exists := completed[tasks[0].ID]; !exists {
-							break
-						}
-
-						l := layers[0]
-
-						blobFile := filepath.Join(c.cacheDir, l.Digest+".tgz")
-						log.Info("Inflating blob", zap.String("blobFile", blobFile))
-
-						f, err := os.Open(blobFile)
-						if err != nil {
-							return errors.WithStack(err)
-						}
-						defer f.Close()
-
-						hasher := sha256.New()
-						gr, err := gzip.NewReader(io.TeeReader(f, hasher))
-						if err != nil {
-							return errors.WithStack(err)
-						}
-						defer gr.Close()
-
-						if err := untar(gr); err != nil {
-							return err
-						}
-
-						computedDigest := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
-						if computedDigest != l.Digest {
-							return errors.Errorf("blob digest doesn't match, expected: %s, got: %s", l.Digest, computedDigest)
-						}
-
-						log.Info("Blob inflated", zap.String("blobFile", blobFile))
-
-						if len(layers) == 1 {
-							return nil
-						}
-
-						layers = layers[1:]
-						tasks = tasks[1:]
+					if len(layers) == 0 && configDone {
+						return nil
 					}
 				}
 			})
@@ -417,7 +418,7 @@ func (c *imageClient) authorize(ctx context.Context, currentAuthToken string) (s
 		return c.authToken, nil
 	}
 
-	err := retry.Do(ctx, retry.FixedConfig{RetryAfter: 5 * time.Second}, func() error {
+	err := retry.Do(ctx, retry.FixedConfig{RetryAfter: 5 * time.Second, MaxAttempts: 10}, func() error {
 		resp, err := c.c.Do(must.HTTPRequest(http.NewRequestWithContext(
 			ctx,
 			http.MethodGet,
@@ -499,7 +500,7 @@ func (c *imageClient) fetchManifest(ctx context.Context, dstFile string) (retErr
 	}
 
 	var authToken string
-	return retry.Do(ctx, retry.FixedConfig{RetryAfter: 5 * time.Second}, func() error {
+	return retry.Do(ctx, retry.FixedConfig{RetryAfter: 5 * time.Second, MaxAttempts: 10}, func() error {
 		if _, err := f.Seek(0, io.SeekStart); err != nil {
 			return errors.WithStack(err)
 		}
@@ -544,8 +545,7 @@ func (c *imageClient) fetchManifest(ctx context.Context, dstFile string) (retErr
 			r = io.TeeReader(r, hasher)
 		}
 
-		_, err = io.Copy(f, r)
-		if err != nil {
+		if _, err := io.Copy(f, r); err != nil {
 			return retry.Retriable(errors.WithStack(err))
 		}
 
@@ -583,9 +583,6 @@ func (c *imageClient) fetchBlob(ctx context.Context, digest, dstFile string) (re
 	}
 
 	f, err := os.OpenFile(dstFile, os.O_CREATE|os.O_WRONLY, 0o600)
-	if errors.Is(err, os.ErrExist) {
-		return nil
-	}
 	if err != nil {
 		return errors.WithStack(err)
 	}
@@ -606,7 +603,7 @@ func (c *imageClient) fetchBlob(ctx context.Context, digest, dstFile string) (re
 	}
 
 	var authToken string
-	return retry.Do(ctx, retry.FixedConfig{RetryAfter: 5 * time.Second}, func() error {
+	return retry.Do(ctx, retry.FixedConfig{RetryAfter: 5 * time.Second, MaxAttempts: 10}, func() error {
 		if _, err := f.Seek(0, io.SeekStart); err != nil {
 			return errors.WithStack(err)
 		}
@@ -645,8 +642,7 @@ func (c *imageClient) fetchBlob(ctx context.Context, digest, dstFile string) (re
 
 		hasher := sha256.New()
 		r := io.TeeReader(resp.Body, hasher)
-		_, err = io.Copy(f, r)
-		if err != nil {
+		if _, err := io.Copy(f, r); err != nil {
 			return retry.Retriable(errors.WithStack(err))
 		}
 
