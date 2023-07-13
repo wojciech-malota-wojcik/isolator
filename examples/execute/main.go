@@ -61,33 +61,33 @@ func main() {
 					// Let's make host's /tmp/mount available inside container under /test
 					{
 						Host:      mountedDir,
-						Container: "/test",
+						Namespace: "/test",
 						Writable:  true,
 					},
 					// To be able to execute system commands
 					{
 						Host:      "/bin",
-						Container: "/bin",
+						Namespace: "/bin",
 					},
 					{
 						Host:      "/usr/bin",
-						Container: "/usr/bin",
+						Namespace: "/usr/bin",
 					},
 					{
 						Host:      "/usr/sbin",
-						Container: "/usr/sbin",
+						Namespace: "/usr/sbin",
 					},
 					{
 						Host:      "/lib",
-						Container: "/lib",
+						Namespace: "/lib",
 					},
 					{
 						Host:      "/lib64",
-						Container: "/lib64",
+						Namespace: "/lib64",
 					},
 					{
 						Host:      "/etc/pki/tls/certs/ca-bundle.crt",
-						Container: "/etc/pki/tls/certs/ca-bundle.crt",
+						Namespace: "/etc/pki/tls/certs/ca-bundle.crt",
 					},
 				},
 			},

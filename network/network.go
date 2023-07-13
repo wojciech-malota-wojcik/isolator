@@ -489,6 +489,7 @@ func configureFirewall(ip *net.IPNet, exposedPorts []ExposedPort) error {
 			UserData: ip.IP,
 			Exprs: firewall.Expressions(
 				firewall.DestinationAddress(p.ExternalIP),
+				firewall.LocalDestinationAddress(),
 				firewall.Protocol(p.Protocol),
 				firewall.DestinationPort(p.ExternalPort),
 				firewall.DestinationNAT(ip.IP, p.InternalPort),
@@ -532,6 +533,7 @@ func configureFirewall(ip *net.IPNet, exposedPorts []ExposedPort) error {
 				UserData: ip.IP,
 				Exprs: firewall.Expressions(
 					firewall.DestinationAddress(p.ExternalIP),
+					firewall.LocalDestinationAddress(),
 					firewall.Protocol(p.Protocol),
 					firewall.DestinationPort(p.ExternalPort),
 					firewall.DestinationNAT(ip.IP, p.InternalPort),

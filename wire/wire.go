@@ -10,15 +10,15 @@ import (
 	"github.com/pkg/errors"
 )
 
-// Mount defines directories to mount inside container
+// Mount defines directories to mount inside container.
 type Mount struct {
-	// Location on Host
+	// Host is the location on host.
 	Host string
 
-	// Mountpoint inside container
-	Container string
+	// Namespace is the mountpoint inside namespace.
+	Namespace string
 
-	// Writable makes mount writable inside container
+	// Writable makes mount writable inside container.
 	Writable bool
 }
 
@@ -81,13 +81,22 @@ type RunDockerContainer struct {
 	// User is the username or UID and group name or GID to use.
 	User string
 
-	// WorkingDir is the path to wrking drectory inside the container.
+	// WorkingDir is the path to working directory inside the container.
 	WorkingDir string
 
 	// Entrypoint for container.
 	Entrypoint []string
 
 	// Args is a list of arguments for the container.
+	Args []string
+}
+
+// RunEmbeddedFunction runs embedded function.
+type RunEmbeddedFunction struct {
+	// Name is the name of the embedded function.
+	Name string
+
+	// Args is a list of arguments for the embedded function.
 	Args []string
 }
 

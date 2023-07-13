@@ -205,22 +205,22 @@ func applyMounts(mounts []wire.Mount) error {
 	// 2. remount it using read-only option
 	for _, m := range mounts {
 		// force path in container should be relative to the new filesystem to prevent hacks (we haven't pivoted yet)
-		m.Container = filepath.Join(".", m.Container)
+		m.Namespace = filepath.Join(".", m.Namespace)
 
 		info, err := os.Stat(m.Host)
 		if err != nil {
 			return errors.WithStack(err)
 		}
 		if info.IsDir() {
-			if err := os.MkdirAll(m.Container, 0o700); err != nil {
+			if err := os.MkdirAll(m.Namespace, 0o700); err != nil {
 				return errors.WithStack(err)
 			}
 		} else {
-			if err := os.MkdirAll(filepath.Dir(m.Container), 0o700); err != nil {
+			if err := os.MkdirAll(filepath.Dir(m.Namespace), 0o700); err != nil {
 				return errors.WithStack(err)
 			}
 			err := func() error {
-				f, err := os.OpenFile(m.Container, os.O_CREATE|os.O_WRONLY|os.O_EXCL, info.Mode())
+				f, err := os.OpenFile(m.Namespace, os.O_CREATE|os.O_WRONLY|os.O_EXCL, info.Mode())
 				if err != nil {
 					if os.IsExist(err) {
 						return nil
@@ -233,11 +233,11 @@ func applyMounts(mounts []wire.Mount) error {
 				return err
 			}
 		}
-		if err := syscall.Mount(m.Host, m.Container, "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
+		if err := syscall.Mount(m.Host, m.Namespace, "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
 			return errors.WithStack(err)
 		}
 		if !m.Writable {
-			if err := syscall.Mount(m.Host, m.Container, "", syscall.MS_BIND|syscall.MS_PRIVATE|syscall.MS_REMOUNT|syscall.MS_RDONLY, ""); err != nil {
+			if err := syscall.Mount(m.Host, m.Namespace, "", syscall.MS_BIND|syscall.MS_PRIVATE|syscall.MS_REMOUNT|syscall.MS_RDONLY, ""); err != nil {
 				return errors.WithStack(err)
 			}
 		}
