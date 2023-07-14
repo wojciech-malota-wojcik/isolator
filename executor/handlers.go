@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"os/exec"
 
@@ -41,19 +42,8 @@ func RunDockerContainerHandler(ctx context.Context, content interface{}, encode 
 		return errors.Errorf("unexpected type %T", content)
 	}
 
-	stdOut := &logTransmitter{
-		Stream: wire.StreamOut,
-		Encode: encode,
-	}
-	stdErr := &logTransmitter{
-		Stream: wire.StreamErr,
-		Encode: encode,
-	}
-
-	defer func() {
-		_ = stdOut.Flush()
-		_ = stdErr.Flush()
-	}()
+	stdOut := newLogTransmitter(encode, wire.StreamOut)
+	stdErr := newLogTransmitter(encode, wire.StreamErr)
 
 	return docker.RunContainer(ctx, docker.RunContainerConfig{
 		CacheDir:   m.CacheDir,
@@ -98,14 +88,8 @@ func ExecuteHandler(ctx context.Context, content interface{}, encode wire.Encode
 		return errors.Errorf("unexpected type %T", content)
 	}
 
-	outTransmitter := &logTransmitter{
-		Stream: wire.StreamOut,
-		Encode: encode,
-	}
-	errTransmitter := &logTransmitter{
-		Stream: wire.StreamErr,
-		Encode: encode,
-	}
+	outTransmitter := newLogTransmitter(encode, wire.StreamOut)
+	errTransmitter := newLogTransmitter(encode, wire.StreamErr)
 
 	cmd := exec.Command("/bin/sh", "-c", m.Command)
 	cmd.Stdout = outTransmitter
@@ -115,57 +99,70 @@ func ExecuteHandler(ctx context.Context, content interface{}, encode wire.Encode
 
 	err := libexec.Exec(ctx, cmd)
 
-	_ = outTransmitter.Flush()
-	_ = errTransmitter.Flush()
-
 	return err
 }
 
-type logTransmitter struct {
-	Encode wire.EncoderFunc
-	Stream wire.Stream
+func newLogTransmitter(encode wire.EncoderFunc, stream wire.Stream) *logTransmitter {
+	return &logTransmitter{
+		encode: encode,
+		stream: stream,
+	}
+}
 
-	buf []byte
+type logTransmitter struct {
+	encode wire.EncoderFunc
+	stream wire.Stream
+	buf    []byte
+	start  int
+	length int
 }
 
 func (lt *logTransmitter) Write(data []byte) (int, error) {
-	length := len(lt.buf) + len(data)
-	if length < 100 {
-		lt.buf = append(lt.buf, data...)
-		return len(data), nil
+	dataLength := len(data)
+	if dataLength == 0 {
+		return 0, nil
 	}
-	buf := make([]byte, length)
-	copy(buf, lt.buf)
-	copy(buf[len(lt.buf):], data)
-	err := lt.Encode(wire.Log{Stream: lt.Stream, Text: string(buf)})
-	if err != nil {
-		return 0, err
-	}
-	lt.buf = make([]byte, 0, len(lt.buf))
-	return len(data), nil
-}
 
-func (lt *logTransmitter) Flush() error {
-	if len(lt.buf) == 0 {
-		return nil
+	if len(lt.buf[lt.start+lt.length:]) < dataLength {
+		newBuf := make([]byte, lt.length+dataLength)
+		copy(newBuf, lt.buf[lt.start:lt.length])
+		lt.buf = newBuf
+		lt.start = 0
 	}
-	if err := lt.Encode(wire.Log{Stream: lt.Stream, Text: string(lt.buf)}); err != nil {
-		return err
+	copy(lt.buf[lt.start+lt.length:], data)
+	lt.length += dataLength
+
+	for {
+		pos := bytes.IndexByte(lt.buf[lt.start:lt.length], '\n')
+		if pos < 0 {
+			break
+		}
+
+		if pos > 0 {
+			err := lt.encode(wire.Log{Stream: lt.stream, Content: lt.buf[lt.start:pos]})
+			if err != nil {
+				return 0, err
+			}
+		}
+
+		lt.start += pos + 1
+		lt.length -= pos + 1
+
+		if lt.start == len(lt.buf) {
+			lt.start = 0
+			lt.length = 0
+		}
 	}
-	lt.buf = make([]byte, 0, len(lt.buf))
-	return nil
+
+	return dataLength, nil
 }
 
 func (lt *logTransmitter) Sync() error {
-	return lt.Flush()
+	return nil
 }
 
 func zapTransmitter(ctx context.Context, encode wire.EncoderFunc) context.Context {
-	transmitter := &logTransmitter{
-		Stream: wire.StreamErr,
-		Encode: encode,
-	}
-
+	transmitter := newLogTransmitter(encode, wire.StreamErr)
 	transmitCore := zapcore.NewCore(zapcore.NewJSONEncoder(logger.EncoderConfig), transmitter, zap.NewAtomicLevelAt(zap.DebugLevel))
 
 	log := logger.Get(ctx)

@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"reflect"
+	"sync"
 
 	"github.com/pkg/errors"
 )
@@ -122,8 +123,8 @@ type Log struct {
 	// Stream is the type of stream where log was produced
 	Stream Stream
 
-	// Text is text printed by command
-	Text string
+	// Content is text printed by command
+	Content []byte
 }
 
 type message struct {
@@ -136,12 +137,16 @@ type EncoderFunc func(content interface{}) error
 
 // NewEncoder creates new message encoder.
 func NewEncoder(w io.Writer) EncoderFunc {
+	var mu sync.Mutex
 	encoder := json.NewEncoder(w)
 	return func(content interface{}) error {
 		contentRaw, err := json.Marshal(content)
 		if err != nil {
 			return errors.WithStack(err)
 		}
+
+		mu.Lock()
+		defer mu.Unlock()
 
 		return errors.WithStack(encoder.Encode(message{
 			Type:    ContentToType(content),
