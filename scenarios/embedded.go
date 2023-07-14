@@ -135,7 +135,7 @@ func (e Embedded) run(ctx context.Context, appDir string, appHosts map[string]ne
 				if err != nil {
 					return errors.WithStack(err)
 				}
-				if _, err := stream.WriteString(m.Text); err != nil {
+				if _, err := stream.Write(m.Content); err != nil {
 					return errors.WithStack(err)
 				}
 			// wire.Result means command finished
