@@ -115,7 +115,7 @@ func main() {
 					if err != nil {
 						panic(err)
 					}
-					if _, err := stream.WriteString(m.Text); err != nil {
+					if _, err := stream.Write(m.Content); err != nil {
 						panic(err)
 					}
 				// wire.Result means command finished
