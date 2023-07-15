@@ -3,6 +3,7 @@ package scenarios
 import (
 	"context"
 	"net"
+	"time"
 
 	"github.com/outofforest/parallel"
 	"github.com/pkg/errors"
@@ -61,20 +62,59 @@ func RunApps(ctx context.Context, config RunAppsConfig, apps ...Application) err
 			})
 		})
 		spawn("logs", parallel.Fail, func(ctx context.Context) error {
-			for logged := range logsCh {
-				stream, err := wire.ToStream(logged.Stream)
-				if err != nil {
-					return errors.WithStack(err)
-				}
-				if _, err := stream.Write(logged.Content); err != nil {
-					return errors.WithStack(err)
-				}
-				if _, err := stream.Write([]byte{'\n'}); err != nil {
-					return errors.WithStack(err)
-				}
-			}
+			return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
+				batchCh := make(chan []wire.Log)
 
-			return nil
+				spawn("collector", parallel.Fail, func(ctx context.Context) error {
+					defer close(batchCh)
+
+					batch := make([]wire.Log, 0, 100)
+					ticker := time.NewTicker(10 * time.Second)
+					defer ticker.Stop()
+
+					ok := true
+					for ok {
+						var logged wire.Log
+						select {
+						case logged, ok = <-logsCh:
+							if ok {
+								batch = append(batch, logged)
+								if len(batch) < cap(batch) {
+									continue
+								}
+							}
+						case <-ticker.C:
+						}
+
+						if len(batch) == 0 {
+							continue
+						}
+
+						batchCh <- batch
+						batch = make([]wire.Log, 0, 100)
+					}
+
+					return errors.WithStack(ctx.Err())
+				})
+				spawn("sender", parallel.Fail, func(ctx context.Context) error {
+					for batch := range batchCh {
+						for _, logged := range batch {
+							stream, err := wire.ToStream(logged.Stream)
+							if err != nil {
+								return errors.WithStack(err)
+							}
+							if _, err := stream.Write(logged.Content); err != nil {
+								return errors.WithStack(err)
+							}
+							if _, err := stream.Write([]byte{'\n'}); err != nil {
+								return errors.WithStack(err)
+							}
+						}
+					}
+					return errors.WithStack(ctx.Err())
+				})
+				return nil
+			})
 		})
 		return nil
 	})
