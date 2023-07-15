@@ -31,7 +31,7 @@ func runServer(ctx context.Context, config Config, rootDir string) error {
 			_ = os.Stdin.Close()
 			return errors.WithStack(ctx.Err())
 		})
-		spawn("server", parallel.Fail, func(ctx context.Context) error {
+		spawn("executor.server", parallel.Exit, func(ctx context.Context) error {
 			decode := wire.NewDecoder(os.Stdin, append(config.Router.Types(), wire.Config{}))
 			encode := wire.NewEncoder(os.Stdout)
 
@@ -98,8 +98,11 @@ func runServer(ctx context.Context, config Config, rootDir string) error {
 				for {
 					content, err := decode()
 					if err != nil {
-						if ctx.Err() != nil || errors.Is(err, io.EOF) {
+						if ctx.Err() != nil {
 							return errors.WithStack(ctx.Err())
+						}
+						if errors.Is(err, io.EOF) {
+							return nil
 						}
 						return err
 					}
