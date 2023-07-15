@@ -17,6 +17,8 @@ import (
 	"github.com/outofforest/isolator/wire"
 )
 
+var _ Application = Container{}
+
 // Container defines container.
 type Container struct {
 	// Name is the name of the container.
@@ -73,7 +75,7 @@ func (c Container) GetIP() net.IP {
 }
 
 // GetTaskFunc returns task function running the container.
-func (c Container) GetTaskFunc(config RunAppsConfig, appHosts map[string]net.IP, spawn parallel.SpawnFn) task.Func {
+func (c Container) GetTaskFunc(config RunAppsConfig, appHosts map[string]net.IP, spawn parallel.SpawnFn, logsCh chan<- wire.Log) task.Func {
 	return func(ctx context.Context) error {
 		ctx = logger.With(ctx, zap.String("appName", c.Name))
 
@@ -97,7 +99,7 @@ func (c Container) GetTaskFunc(config RunAppsConfig, appHosts map[string]net.IP,
 
 		spawn(c.Name, parallel.Fail, func(ctx context.Context) error {
 			ctx = logger.With(ctx, zap.String("appName", c.Name))
-			return c.run(ctx, config, appDir, appHosts)
+			return c.run(ctx, config, appDir, appHosts, logsCh)
 		})
 		return nil
 	}
@@ -168,7 +170,7 @@ func (c Container) inflate(ctx context.Context, config RunAppsConfig, appDir str
 	})
 }
 
-func (c Container) run(ctx context.Context, config RunAppsConfig, appDir string, appHosts map[string]net.IP) error {
+func (c Container) run(ctx context.Context, config RunAppsConfig, appDir string, appHosts map[string]net.IP, logsCh chan<- wire.Log) error {
 	hosts := map[string]net.IP{}
 	for h, ip := range c.Hosts {
 		hosts[h] = ip
@@ -241,13 +243,7 @@ func (c Container) run(ctx context.Context, config RunAppsConfig, appDir string,
 			switch m := content.(type) {
 			// wire.Log contains message printed by executed command to stdout or stderr
 			case wire.Log:
-				stream, err := wire.ToStream(m.Stream)
-				if err != nil {
-					return errors.WithStack(err)
-				}
-				if _, err := stream.Write(m.Content); err != nil {
-					return errors.WithStack(err)
-				}
+				logsCh <- m
 			// wire.Result means command finished
 			case wire.Result:
 				if m.Error != "" {
