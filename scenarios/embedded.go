@@ -16,6 +16,8 @@ import (
 	"github.com/outofforest/isolator/wire"
 )
 
+var _ Application = Embedded{}
+
 // Embedded defines embedded function to run inside isolation.
 type Embedded struct {
 	// Name is the name of the function.
@@ -54,7 +56,7 @@ func (e Embedded) GetIP() net.IP {
 }
 
 // GetTaskFunc returns task function running the embedded function.
-func (e Embedded) GetTaskFunc(config RunAppsConfig, appHosts map[string]net.IP, spawn parallel.SpawnFn) task.Func {
+func (e Embedded) GetTaskFunc(config RunAppsConfig, appHosts map[string]net.IP, spawn parallel.SpawnFn, logsCh chan<- wire.Log) task.Func {
 	return func(ctx context.Context) error {
 		if err := os.MkdirAll(config.AppsDir, 0o700); err != nil {
 			return errors.WithStack(err)
@@ -66,13 +68,13 @@ func (e Embedded) GetTaskFunc(config RunAppsConfig, appHosts map[string]net.IP, 
 
 		spawn(e.Name, parallel.Fail, func(ctx context.Context) error {
 			ctx = logger.With(ctx, zap.String("appName", e.Name))
-			return e.run(ctx, appDir, appHosts)
+			return e.run(ctx, appDir, appHosts, logsCh)
 		})
 		return nil
 	}
 }
 
-func (e Embedded) run(ctx context.Context, appDir string, appHosts map[string]net.IP) error {
+func (e Embedded) run(ctx context.Context, appDir string, appHosts map[string]net.IP, logsCh chan<- wire.Log) error {
 	hosts := map[string]net.IP{}
 	for h, ip := range e.Hosts {
 		hosts[h] = ip
@@ -131,13 +133,7 @@ func (e Embedded) run(ctx context.Context, appDir string, appHosts map[string]ne
 			switch m := content.(type) {
 			// wire.Log contains message printed by executed command to stdout or stderr
 			case wire.Log:
-				stream, err := wire.ToStream(m.Stream)
-				if err != nil {
-					return errors.WithStack(err)
-				}
-				if _, err := stream.Write(m.Content); err != nil {
-					return errors.WithStack(err)
-				}
+				logsCh <- m
 			// wire.Result means command finished
 			case wire.Result:
 				if m.Error != "" {
