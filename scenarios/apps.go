@@ -39,10 +39,10 @@ type RunAppsConfig struct {
 type Application interface {
 	GetName() string
 	GetIP() net.IP
-	GetTaskFunc(config RunAppsConfig, appHosts map[string]net.IP, spawn parallel.SpawnFn, logsCh chan<- LogEnvelope) task.Func
+	GetTaskFunc(config RunAppsConfig, appHosts map[string]net.IP, spawn parallel.SpawnFn, logsCh chan<- logEnvelope) task.Func
 }
 
-type LogEnvelope struct {
+type logEnvelope struct {
 	AppName string
 	Log     wire.Log
 }
@@ -57,7 +57,7 @@ func RunApps(ctx context.Context, config RunAppsConfig, apps ...Application) err
 	}
 
 	return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
-		logsCh := make(chan LogEnvelope)
+		logsCh := make(chan logEnvelope)
 
 		spawn("apps", parallel.Exit, func(ctx context.Context) error {
 			defer close(logsCh)
@@ -85,19 +85,19 @@ func RunApps(ctx context.Context, config RunAppsConfig, apps ...Application) err
 		})
 		spawn("logs", parallel.Fail, func(ctx context.Context) error {
 			return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
-				batchCh := make(chan []LogEnvelope, 10)
+				batchCh := make(chan []logEnvelope, 10)
 
 				spawn("collector", parallel.Fail, func(ctx context.Context) error {
 					log := logger.Get(ctx)
 					defer close(batchCh)
 
-					batch := make([]LogEnvelope, 0, 100)
+					batch := make([]logEnvelope, 0, 100)
 					ticker := time.NewTicker(10 * time.Second)
 					defer ticker.Stop()
 
 					ok := true
 					for ok {
-						var logged LogEnvelope
+						var logged logEnvelope
 						select {
 						case logged, ok = <-logsCh:
 							if ok {
@@ -118,7 +118,7 @@ func RunApps(ctx context.Context, config RunAppsConfig, apps ...Application) err
 						default:
 							log.Error("Log buffer full")
 						}
-						batch = make([]LogEnvelope, 0, 100)
+						batch = make([]logEnvelope, 0, 100)
 					}
 
 					return errors.WithStack(ctx.Err())
@@ -171,7 +171,7 @@ func RunApps(ctx context.Context, config RunAppsConfig, apps ...Application) err
 						streams := make([]map[string]interface{}, 0, len(items))
 						for k, is := range items {
 							sort.Slice(is, func(i, j int) bool {
-								return is[i].Time.Before(is[j].Time)
+								return is[i].Time.Before(is[j].Time) //nolint:scopelint
 							})
 
 							values := make([][]string, 0, len(is))

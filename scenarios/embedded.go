@@ -56,7 +56,7 @@ func (e Embedded) GetIP() net.IP {
 }
 
 // GetTaskFunc returns task function running the embedded function.
-func (e Embedded) GetTaskFunc(config RunAppsConfig, appHosts map[string]net.IP, spawn parallel.SpawnFn, logsCh chan<- LogEnvelope) task.Func {
+func (e Embedded) GetTaskFunc(config RunAppsConfig, appHosts map[string]net.IP, spawn parallel.SpawnFn, logsCh chan<- logEnvelope) task.Func {
 	return func(ctx context.Context) error {
 		if err := os.MkdirAll(config.AppsDir, 0o700); err != nil {
 			return errors.WithStack(err)
@@ -74,7 +74,7 @@ func (e Embedded) GetTaskFunc(config RunAppsConfig, appHosts map[string]net.IP, 
 	}
 }
 
-func (e Embedded) run(ctx context.Context, appDir string, appHosts map[string]net.IP, logsCh chan<- LogEnvelope) error {
+func (e Embedded) run(ctx context.Context, appDir string, appHosts map[string]net.IP, logsCh chan<- logEnvelope) error {
 	hosts := map[string]net.IP{}
 	for h, ip := range e.Hosts {
 		hosts[h] = ip
@@ -133,7 +133,7 @@ func (e Embedded) run(ctx context.Context, appDir string, appHosts map[string]ne
 			switch m := content.(type) {
 			// wire.Log contains message printed by executed command to stdout or stderr
 			case wire.Log:
-				logsCh <- LogEnvelope{AppName: e.Name, Log: m}
+				logsCh <- logEnvelope{AppName: e.Name, Log: m}
 			// wire.Result means command finished
 			case wire.Result:
 				if m.Error != "" {

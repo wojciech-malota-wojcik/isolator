@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os"
 
@@ -111,11 +112,7 @@ func main() {
 				switch m := content.(type) {
 				// wire.Log contains message printed by executed command to stdout or stderr
 				case wire.Log:
-					stream, err := wire.ToStream(m.Stream)
-					if err != nil {
-						panic(err)
-					}
-					if _, err := stream.Write(m.Content); err != nil {
+					if _, err := fmt.Println(string(m.Content)); err != nil {
 						panic(err)
 					}
 				// wire.Result means command finished
