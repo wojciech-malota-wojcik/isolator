@@ -75,7 +75,7 @@ func (c Container) GetIP() net.IP {
 }
 
 // GetTaskFunc returns task function running the container.
-func (c Container) GetTaskFunc(config RunAppsConfig, appHosts map[string]net.IP, spawn parallel.SpawnFn, logsCh chan<- wire.Log) task.Func {
+func (c Container) GetTaskFunc(config RunAppsConfig, appHosts map[string]net.IP, spawn parallel.SpawnFn, logsCh chan<- logEnvelope) task.Func {
 	return func(ctx context.Context) error {
 		ctx = logger.With(ctx, zap.String("appName", c.Name))
 
@@ -98,7 +98,7 @@ func (c Container) GetTaskFunc(config RunAppsConfig, appHosts map[string]net.IP,
 		}
 
 		spawn(c.Name, parallel.Fail, func(ctx context.Context) error {
-			ctx = logger.With(ctx, zap.String("appName", c.Name))
+			ctx = logger.With(ctx, zap.String("appName", c.Name), zap.Stringer("appIP", c.IP))
 			return c.run(ctx, config, appDir, appHosts, logsCh)
 		})
 		return nil
@@ -170,7 +170,7 @@ func (c Container) inflate(ctx context.Context, config RunAppsConfig, appDir str
 	})
 }
 
-func (c Container) run(ctx context.Context, config RunAppsConfig, appDir string, appHosts map[string]net.IP, logsCh chan<- wire.Log) error {
+func (c Container) run(ctx context.Context, config RunAppsConfig, appDir string, appHosts map[string]net.IP, logsCh chan<- logEnvelope) error {
 	hosts := map[string]net.IP{}
 	for h, ip := range c.Hosts {
 		hosts[h] = ip
@@ -243,7 +243,7 @@ func (c Container) run(ctx context.Context, config RunAppsConfig, appDir string,
 			switch m := content.(type) {
 			// wire.Log contains message printed by executed command to stdout or stderr
 			case wire.Log:
-				logsCh <- m
+				logsCh <- logEnvelope{AppName: c.Name, Log: m}
 			// wire.Result means command finished
 			case wire.Result:
 				if m.Error != "" {

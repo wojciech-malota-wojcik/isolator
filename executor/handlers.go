@@ -5,6 +5,7 @@ import (
 	"context"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/outofforest/libexec"
 	"github.com/outofforest/logger"
@@ -43,8 +44,8 @@ func RunDockerContainerHandler(ctx context.Context, content interface{}, encode 
 		return errors.Errorf("unexpected type %T", content)
 	}
 
-	stdOut := newLogTransmitter(encode, wire.StreamOut)
-	stdErr := newLogTransmitter(encode, wire.StreamErr)
+	stdOut := newLogTransmitter(encode)
+	stdErr := newLogTransmitter(encode)
 
 	return docker.RunContainer(ctx, docker.RunContainerConfig{
 		CacheDir:   m.CacheDir,
@@ -89,8 +90,8 @@ func ExecuteHandler(ctx context.Context, content interface{}, encode wire.Encode
 		return errors.Errorf("unexpected type %T", content)
 	}
 
-	outTransmitter := newLogTransmitter(encode, wire.StreamOut)
-	errTransmitter := newLogTransmitter(encode, wire.StreamErr)
+	outTransmitter := newLogTransmitter(encode)
+	errTransmitter := newLogTransmitter(encode)
 
 	cmd := exec.Command("/bin/sh", "-c", m.Command)
 	cmd.Stdout = outTransmitter
@@ -103,16 +104,14 @@ func ExecuteHandler(ctx context.Context, content interface{}, encode wire.Encode
 	return err
 }
 
-func newLogTransmitter(encode wire.EncoderFunc, stream wire.Stream) *logTransmitter {
+func newLogTransmitter(encode wire.EncoderFunc) *logTransmitter {
 	return &logTransmitter{
 		encode: encode,
-		stream: stream,
 	}
 }
 
 type logTransmitter struct {
 	encode wire.EncoderFunc
-	stream wire.Stream
 
 	mu     sync.Mutex
 	buf    []byte
@@ -158,7 +157,7 @@ func (lt *logTransmitter) Write(data []byte) (int, error) {
 		}
 
 		if pos > 0 {
-			err := lt.encode(wire.Log{Stream: lt.stream, Content: lt.buf[lt.start : lt.start+pos]})
+			err := lt.encode(wire.Log{Time: time.Now().UTC(), Content: lt.buf[lt.start : lt.start+pos]})
 			if err != nil {
 				return 0, err
 			}
@@ -181,7 +180,7 @@ func (lt *logTransmitter) Sync() error {
 }
 
 func zapTransmitter(ctx context.Context, encode wire.EncoderFunc) context.Context {
-	transmitter := newLogTransmitter(encode, wire.StreamErr)
+	transmitter := newLogTransmitter(encode)
 	transmitCore := zapcore.NewCore(zapcore.NewJSONEncoder(logger.EncoderConfig), transmitter, zap.NewAtomicLevelAt(zap.DebugLevel))
 
 	log := logger.Get(ctx)

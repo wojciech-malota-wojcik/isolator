@@ -48,7 +48,7 @@ func Run(ctx context.Context, config Config, clientFunc ClientFunc) error {
 		cmd.Stdin = inPipe
 		cmd.Stderr = os.Stderr
 
-		spawn("server", parallel.Fail, func(ctx context.Context) error {
+		spawn("executorCommand", parallel.Fail, func(ctx context.Context) error {
 			defer func() {
 				_ = inPipe.Close()
 				_ = outPipe.Close()

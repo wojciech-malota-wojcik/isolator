@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"io"
 	"net"
-	"os"
 	"reflect"
 	"sync"
+	"time"
 
 	"github.com/pkg/errors"
 )
@@ -107,23 +107,12 @@ type Result struct {
 	Error string
 }
 
-// Stream is the type of stream where log was produced
-type Stream int
-
-const (
-	// StreamOut represents stdout
-	StreamOut Stream = iota
-
-	// StreamErr represents stderr
-	StreamErr
-)
-
-// Log is the log message printed by executed command
+// Log is the log message printed by executed command.
 type Log struct {
-	// Stream is the type of stream where log was produced
-	Stream Stream
+	// Time is the time when log was produced.
+	Time time.Time
 
-	// Content is text printed by command
+	// Content is text printed by command.
 	Content []byte
 }
 
@@ -196,18 +185,4 @@ func typesToMap(types []interface{}) map[string]interface{} {
 		res[ContentToType(t)] = t
 	}
 	return res
-}
-
-// ToStream converts stream value to stdin or stderr.
-func ToStream(stream Stream) (*os.File, error) {
-	var f *os.File
-	switch stream {
-	case StreamOut:
-		f = os.Stdout
-	case StreamErr:
-		f = os.Stderr
-	default:
-		return nil, errors.Errorf("unknown stream: %d", stream)
-	}
-	return f, nil
 }
