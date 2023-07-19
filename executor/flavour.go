@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 
-	"github.com/outofforest/logger"
 	"github.com/outofforest/parallel"
 	"github.com/outofforest/run"
 	"github.com/pkg/errors"
@@ -38,6 +37,6 @@ func NewFlavour(config Config) run.FlavourFunc {
 			return errors.New("exactly three arguments are required")
 		}
 
-		return runServer(logger.WithLogger(ctx, logger.Get(ctx).Named("executor")), config, os.Args[2])
+		return runServer(ctx, config, os.Args[2])
 	}
 }
