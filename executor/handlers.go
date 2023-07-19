@@ -82,8 +82,7 @@ func NewRunEmbeddedFunctionHandler(funcs map[string]EmbeddedFunc) HandlerFunc {
 		log := logger.Get(ctx)
 		log.Info("Starting embedded function")
 
-		err := fn(zapTransmitter(ctx, encode), m.Args)
-		if err != nil {
+		if err := fn(zapTransmitter(ctx, encode), m.Args); err != nil {
 			log.Error("Embedded function exited with error", zap.Error(err))
 			return err
 		}
@@ -110,8 +109,7 @@ func ExecuteHandler(ctx context.Context, content interface{}, encode wire.Encode
 	log := logger.Get(ctx)
 	log.Info("Starting command")
 
-	err := libexec.Exec(ctx, cmd)
-	if err != nil {
+	if err := libexec.Exec(ctx, cmd); err != nil {
 		log.Error("Command exited with error", zap.Error(err))
 		return err
 	}
