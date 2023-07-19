@@ -25,13 +25,13 @@ func runServer(ctx context.Context, config Config, rootDir string) error {
 		log := logger.Get(ctx)
 		log.Info("Server started")
 
-		spawn("watchdog", parallel.Fail, func(ctx context.Context) error {
+		spawn("executor.watchdog", parallel.Fail, func(ctx context.Context) error {
 			<-ctx.Done()
 			// os.Stdin is used as input stream for client, so it has to be closed to force client.Receive() to exit
 			_ = os.Stdin.Close()
 			return errors.WithStack(ctx.Err())
 		})
-		spawn("executor.server", parallel.Exit, func(ctx context.Context) error {
+		spawn("executor.environment", parallel.Exit, func(ctx context.Context) error {
 			decode := wire.NewDecoder(os.Stdin, append(config.Router.Types(), wire.Config{}))
 			encode := wire.NewEncoder(os.Stdout)
 

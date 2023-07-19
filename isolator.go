@@ -48,7 +48,7 @@ func Run(ctx context.Context, config Config, clientFunc ClientFunc) error {
 		cmd.Stdin = inPipe
 		cmd.Stderr = os.Stderr
 
-		spawn("executorCommand", parallel.Fail, func(ctx context.Context) error {
+		spawn("isolator.executor", parallel.Fail, func(ctx context.Context) error {
 			defer func() {
 				_ = inPipe.Close()
 				_ = outPipe.Close()
@@ -80,7 +80,7 @@ func Run(ctx context.Context, config Config, clientFunc ClientFunc) error {
 			}
 			return errors.WithStack(ctx.Err())
 		})
-		spawn("watchdog", parallel.Fail, func(ctx context.Context) error {
+		spawn("isolator.watchdog", parallel.Fail, func(ctx context.Context) error {
 			<-ctx.Done()
 
 			_ = inPipe.Close()
@@ -103,7 +103,7 @@ func Run(ctx context.Context, config Config, clientFunc ClientFunc) error {
 				return errors.WithStack(ctx.Err())
 			}
 		})
-		spawn("sender", parallel.Fail, func(ctx context.Context) (retErr error) {
+		spawn("isolator.sender", parallel.Fail, func(ctx context.Context) (retErr error) {
 			log := logger.Get(ctx)
 			encode := wire.NewEncoder(inPipe)
 			var serverStarted bool
@@ -175,7 +175,7 @@ func Run(ctx context.Context, config Config, clientFunc ClientFunc) error {
 				}
 			}
 		})
-		spawn("receiver", parallel.Fail, func(ctx context.Context) error {
+		spawn("isolator.receiver", parallel.Fail, func(ctx context.Context) error {
 			defer close(incoming)
 
 			decode := wire.NewDecoder(outPipe, config.Types)
@@ -191,7 +191,7 @@ func Run(ctx context.Context, config Config, clientFunc ClientFunc) error {
 				incoming <- content
 			}
 		})
-		spawn("client", parallel.Exit, func(ctx context.Context) error {
+		spawn("isolator.client", parallel.Exit, func(ctx context.Context) error {
 			defer close(outgoing)
 			return clientFunc(ctx, incoming, outgoing)
 		})
