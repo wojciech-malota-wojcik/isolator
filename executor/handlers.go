@@ -79,7 +79,17 @@ func NewRunEmbeddedFunctionHandler(funcs map[string]EmbeddedFunc) HandlerFunc {
 			return errors.Errorf("embedded function %s does not exist", m.Name)
 		}
 
-		return fn(zapTransmitter(ctx, encode), m.Args)
+		log := logger.Get(ctx)
+		log.Info("Starting embedded function")
+
+		err := fn(zapTransmitter(ctx, encode), m.Args)
+		if err != nil {
+			log.Error("Embedded function exited with error", zap.Error(err))
+			return err
+		}
+
+		log.Info("Embedded function exited")
+		return nil
 	}
 }
 
@@ -97,11 +107,17 @@ func ExecuteHandler(ctx context.Context, content interface{}, encode wire.Encode
 	cmd.Stdout = outTransmitter
 	cmd.Stderr = errTransmitter
 
-	logger.Get(ctx).Info("Executing command")
+	log := logger.Get(ctx)
+	log.Info("Starting command")
 
 	err := libexec.Exec(ctx, cmd)
+	if err != nil {
+		log.Error("Command exited with error", zap.Error(err))
+		return err
+	}
 
-	return err
+	log.Info("Command exited")
+	return nil
 }
 
 func newLogTransmitter(encode wire.EncoderFunc) *logTransmitter {

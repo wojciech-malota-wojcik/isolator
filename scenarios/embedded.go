@@ -118,7 +118,7 @@ func (e Embedded) run(ctx context.Context, appDir string, appHosts map[string]ne
 
 	return isolator.Run(ctx, runConfig, func(ctx context.Context, incoming <-chan interface{}, outgoing chan<- interface{}) error {
 		log := logger.Get(ctx)
-		log.Info("Starting embedded")
+		log.Info("Requesting embedded function execution")
 
 		select {
 		case <-ctx.Done():

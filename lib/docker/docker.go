@@ -293,7 +293,7 @@ func (c *imageClient) RunContainer(ctx context.Context, config RunContainerConfi
 		zap.String("manifestPath", manifestPath),
 	)
 	log := logger.Get(ctx)
-	log.Info("Running container")
+	log.Info("Starting container")
 
 	f, err := os.Open(manifestPath)
 	if err != nil {
@@ -397,8 +397,6 @@ func (c *imageClient) RunContainer(ctx context.Context, config RunContainerConfi
 			},
 		},
 	}
-
-	log.Info("Starting container", zap.Strings("args", args), zap.Int("uid", userID), zap.Int("gid", groupID))
 
 	if err := libexec.Exec(ctx, cmd); err != nil {
 		log.Error("Container exited with error", zap.Error(err))
