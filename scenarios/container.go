@@ -221,7 +221,7 @@ func (c Container) run(ctx context.Context, config RunAppsConfig, appDir string,
 
 	return isolator.Run(ctx, runConfig, func(ctx context.Context, incoming <-chan interface{}, outgoing chan<- interface{}) error {
 		log := logger.Get(ctx)
-		log.Info("Starting container")
+		log.Info("Requesting docker container")
 
 		select {
 		case <-ctx.Done():
