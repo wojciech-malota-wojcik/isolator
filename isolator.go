@@ -225,8 +225,7 @@ func newExecutorServerCommand(config Config) *exec.Cmd {
 			unix.CLONE_NEWUSER |
 			unix.CLONE_NEWIPC |
 			unix.CLONE_NEWUTS |
-			unix.CLONE_NEWCGROUP |
-			unix.CLONE_NEWNET,
+			unix.CLONE_NEWCGROUP,
 		AmbientCaps: []uintptr{
 			unix.CAP_SYS_ADMIN, // by adding CAP_SYS_ADMIN executor may mount /proc
 		},
@@ -245,6 +244,10 @@ func newExecutorServerCommand(config Config) *exec.Cmd {
 				Size:        65535,
 			},
 		},
+	}
+
+	if !config.Executor.UseHostNetwork {
+		cmd.SysProcAttr.Cloneflags |= unix.CLONE_NEWNET
 	}
 
 	return cmd
