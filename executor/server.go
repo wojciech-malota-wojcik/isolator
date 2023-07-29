@@ -84,7 +84,7 @@ func runServer(ctx context.Context, config Config, rootDir string) error {
 				}
 			}
 
-			if runtimeConfig.IP != nil {
+			if !runtimeConfig.UseHostNetwork && runtimeConfig.IP != nil {
 				if err := network.SetupContainer(runtimeConfig.IP); err != nil {
 					return err
 				}

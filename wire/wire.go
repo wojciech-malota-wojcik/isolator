@@ -28,6 +28,9 @@ type Config struct {
 	// ConfigureSystem tells executor to mount standard mounts like /proc, /dev, /tmp ...  and configure DNS inside new root.
 	ConfigureSystem bool
 
+	// UseHostNetwork instructs isolator to use host's network and prevents network namespace from being isolated.
+	UseHostNetwork bool
+
 	// IP is the IP to assign executor to.
 	IP *net.IPNet
 
