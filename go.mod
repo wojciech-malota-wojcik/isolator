@@ -1,6 +1,6 @@
 module github.com/outofforest/isolator
 
-go 1.20
+go 1.23
 
 require (
 	github.com/google/nftables v0.1.0

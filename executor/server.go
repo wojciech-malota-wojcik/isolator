@@ -9,15 +9,15 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/outofforest/logger"
-	"github.com/outofforest/parallel"
-	"github.com/outofforest/run"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 
 	"github.com/outofforest/isolator/initprocess"
 	"github.com/outofforest/isolator/network"
 	"github.com/outofforest/isolator/wire"
+	"github.com/outofforest/logger"
+	"github.com/outofforest/parallel"
+	"github.com/outofforest/run"
 )
 
 func runServer(ctx context.Context, config Config, rootDir string) error {
@@ -48,6 +48,7 @@ func runServer(ctx context.Context, config Config, rootDir string) error {
 				return err
 			}
 
+			//nolint:nestif
 			if runtimeConfig.ConfigureSystem {
 				if err := mountProc("proc"); err != nil {
 					return err
@@ -130,7 +131,8 @@ func runServer(ctx context.Context, config Config, rootDir string) error {
 }
 
 func prepareNewRoot(rootDir string) error {
-	// systemd remounts everything as MS_SHARED, to prevent mess let's remount everything back to MS_PRIVATE inside namespace
+	// systemd remounts everything as MS_SHARED, to prevent mess let's remount everything back to
+	// MS_PRIVATE inside namespace
 	if err := syscall.Mount("", "/", "", syscall.MS_SLAVE|syscall.MS_REC, ""); err != nil {
 		return errors.WithStack(err)
 	}
@@ -184,7 +186,8 @@ func populateDev() error {
 		if err := f.Close(); err != nil {
 			return errors.WithStack(err)
 		}
-		if err := syscall.Mount(filepath.Join("/", devPath), devPath, "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
+		if err := syscall.Mount(filepath.Join("/", devPath), devPath, "",
+			syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
 			return errors.WithStack(err)
 		}
 	}
@@ -214,6 +217,8 @@ func applyMounts(mounts []wire.Mount) error {
 		if err != nil {
 			return errors.WithStack(err)
 		}
+
+		//nolint:nestif
 		if info.IsDir() {
 			if err := os.MkdirAll(m.Namespace, 0o700); err != nil {
 				return errors.WithStack(err)
@@ -236,11 +241,13 @@ func applyMounts(mounts []wire.Mount) error {
 				return err
 			}
 		}
-		if err := syscall.Mount(m.Host, m.Namespace, "", syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
+		if err := syscall.Mount(m.Host, m.Namespace, "",
+			syscall.MS_BIND|syscall.MS_PRIVATE, ""); err != nil {
 			return errors.WithStack(err)
 		}
 		if !m.Writable {
-			if err := syscall.Mount(m.Host, m.Namespace, "", syscall.MS_BIND|syscall.MS_PRIVATE|syscall.MS_REMOUNT|syscall.MS_RDONLY, ""); err != nil {
+			if err := syscall.Mount(m.Host, m.Namespace, "",
+				syscall.MS_BIND|syscall.MS_PRIVATE|syscall.MS_REMOUNT|syscall.MS_RDONLY, ""); err != nil {
 				return errors.WithStack(err)
 			}
 		}
@@ -255,7 +262,8 @@ func pivotRoot() error {
 	if err := syscall.PivotRoot(".", ".old"); err != nil {
 		return errors.WithStack(err)
 	}
-	if err := syscall.Mount("", ".old", "", syscall.MS_PRIVATE|syscall.MS_REC, ""); err != nil {
+	if err := syscall.Mount("", ".old", "",
+		syscall.MS_PRIVATE|syscall.MS_REC, ""); err != nil {
 		return errors.WithStack(err)
 	}
 	if err := syscall.Unmount(".old", syscall.MNT_DETACH); err != nil {

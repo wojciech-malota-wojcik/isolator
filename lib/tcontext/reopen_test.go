@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/outofforest/isolator/lib/test"
 )
@@ -16,7 +17,7 @@ func TestReopen(t *testing.T) {
 
 	ctx2 := Reopen(ctx1)
 	assert.Equal(t, 42, ctx2.Value(&key))
-	assert.Nil(t, ctx2.Err())
+	require.NoError(t, ctx2.Err())
 	_, hasDeadline := ctx2.Deadline()
 	assert.False(t, hasDeadline)
 	select {
@@ -28,7 +29,7 @@ func TestReopen(t *testing.T) {
 	cancel()
 
 	assert.Equal(t, 42, ctx2.Value(&key))
-	assert.Nil(t, ctx2.Err())
+	require.NoError(t, ctx2.Err())
 	_, hasDeadline = ctx2.Deadline()
 	assert.False(t, hasDeadline)
 	select {
@@ -39,7 +40,7 @@ func TestReopen(t *testing.T) {
 
 	ctx3 := Reopen(ctx1)
 	assert.Equal(t, 42, ctx3.Value(&key))
-	assert.Nil(t, ctx3.Err())
+	require.NoError(t, ctx3.Err())
 	_, hasDeadline = ctx3.Deadline()
 	assert.False(t, hasDeadline)
 	select {

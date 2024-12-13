@@ -2,7 +2,6 @@ package initprocess
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -11,10 +10,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/outofforest/logger"
-	"github.com/outofforest/parallel"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+
+	"github.com/outofforest/logger"
+	"github.com/outofforest/parallel"
 )
 
 const (
@@ -27,7 +27,8 @@ const (
 
 var procRegExp = regexp.MustCompile("^[0-9]+$")
 
-// Flavour adds logic required by the init process. It awaits zombie processes and terminates all the child processes on exit.
+// Flavour adds logic required by the init process. It awaits zombie processes and terminates all the child processes
+// on exit.
 func Flavour(ctx context.Context, appFunc parallel.Task) error {
 	procFSPath, pid, err := findProcfs()
 	if err != nil {
@@ -63,6 +64,8 @@ func Flavour(ctx context.Context, appFunc parallel.Task) error {
 						log.Info("Terminating leftover processes", zap.Int("count", len(children)))
 
 						var running uint32
+
+						//nolint:nestif
 						if len(children) > 0 {
 							for _, properties := range children {
 								childPID, err := strconv.Atoi(properties[pidIndex])
@@ -93,15 +96,18 @@ func Flavour(ctx context.Context, appFunc parallel.Task) error {
 								select {
 								case <-timeout:
 									log.Error("Killing process")
-									if err := proc.Signal(syscall.SIGKILL); err != nil && !errors.Is(err, os.ErrProcessDone) {
+									if err := proc.Signal(syscall.SIGKILL); err != nil &&
+										!errors.Is(err, os.ErrProcessDone) {
 										return errors.WithStack(err)
 									}
 								default:
 									log.Warn("Terminating process")
-									if err := proc.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+									if err := proc.Signal(syscall.SIGTERM); err != nil &&
+										!errors.Is(err, os.ErrProcessDone) {
 										return errors.WithStack(err)
 									}
-									if err := proc.Signal(syscall.SIGINT); err != nil && !errors.Is(err, os.ErrProcessDone) {
+									if err := proc.Signal(syscall.SIGINT); err != nil &&
+										!errors.Is(err, os.ErrProcessDone) {
 										return errors.WithStack(err)
 									}
 								}
@@ -142,7 +148,8 @@ func Flavour(ctx context.Context, appFunc parallel.Task) error {
 						return errors.WithStack(err)
 					}
 
-					log.Info("Zombie process deleted", zap.Int("pid", zPID), zap.String("command", command))
+					log.Info("Zombie process deleted", zap.Int("pid", zPID),
+						zap.String("command", command))
 				}
 
 				zombies = map[int]string{}
@@ -191,8 +198,9 @@ func findProcfs() (string, string, error) {
 		return "", "", errors.New("no mounted procfs found")
 	}
 
-	if pid != fmt.Sprintf("%d", os.Getpid()) {
-		return "", "", errors.Errorf("pid %s read from procfs does not match the %d read from the syscall", pid, os.Getpid())
+	if pid != strconv.Itoa(os.Getpid()) {
+		return "", "", errors.Errorf("pid %s read from procfs does not match the %d read from the syscall", pid,
+			os.Getpid())
 	}
 
 	return procFSPath, pid, nil

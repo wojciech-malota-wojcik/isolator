@@ -10,8 +10,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/outofforest/logger"
-	"github.com/outofforest/parallel"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/sys/unix"
@@ -19,12 +17,16 @@ import (
 	"github.com/outofforest/isolator/executor"
 	"github.com/outofforest/isolator/network"
 	"github.com/outofforest/isolator/wire"
+	"github.com/outofforest/logger"
+	"github.com/outofforest/parallel"
 )
 
 // ClientFunc defines the client function for isolator.
 type ClientFunc func(ctx context.Context, incoming <-chan interface{}, outgoing chan<- interface{}) error
 
 // Run runs executor server and communication channel.
+//
+//nolint:gocyclo
 func Run(ctx context.Context, config Config, clientFunc ClientFunc) error {
 	config, err := sanitizeConfig(config)
 	if err != nil {
@@ -121,6 +123,7 @@ func Run(ctx context.Context, config Config, clientFunc ClientFunc) error {
 					return errors.WithStack(ctx.Err())
 				}
 
+				//nolint:nestif
 				if !serverStarted {
 					serverStarted = true
 					close(startCh)

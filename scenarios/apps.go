@@ -11,8 +11,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/outofforest/logger"
-	"github.com/outofforest/parallel"
 	"github.com/pkg/errors"
 	"github.com/ridge/must"
 	"go.uber.org/zap"
@@ -21,6 +19,8 @@ import (
 	"github.com/outofforest/isolator/lib/task"
 	"github.com/outofforest/isolator/lib/tcontext"
 	"github.com/outofforest/isolator/wire"
+	"github.com/outofforest/logger"
+	"github.com/outofforest/parallel"
 )
 
 // LogsConfig is the configuration of remote loki logs receiver.
@@ -39,7 +39,8 @@ type RunAppsConfig struct {
 type Application interface {
 	GetName() string
 	GetIP() net.IP
-	GetTaskFunc(config RunAppsConfig, appHosts map[string]net.IP, spawn parallel.SpawnFn, logsCh chan<- logEnvelope) task.Func
+	GetTaskFunc(config RunAppsConfig, appHosts map[string]net.IP, spawn parallel.SpawnFn,
+		logsCh chan<- logEnvelope) task.Func
 }
 
 type logEnvelope struct {
@@ -64,7 +65,8 @@ func RunApps(ctx context.Context, config RunAppsConfig, apps ...Application) err
 
 			return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
 				spawn("start", parallel.Continue, func(ctx context.Context) error {
-					return task.Run(ctx, nil, func(ctx context.Context, taskCh chan<- task.Task, doneCh <-chan task.Task) error {
+					return task.Run(ctx, nil, func(ctx context.Context, taskCh chan<- task.Task,
+						doneCh <-chan task.Task) error {
 						for _, app := range apps {
 							select {
 							case <-ctx.Done():
@@ -195,7 +197,9 @@ func RunApps(ctx context.Context, config RunAppsConfig, apps ...Application) err
 							requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 							defer cancel()
 
-							req := must.HTTPRequest(http.NewRequestWithContext(requestCtx, http.MethodPost, config.LogsConfig.Address, bytes.NewReader(must.Bytes(json.Marshal(map[string]interface{}{"streams": streams})))))
+							req := must.HTTPRequest(http.NewRequestWithContext(requestCtx, http.MethodPost,
+								config.LogsConfig.Address,
+								bytes.NewReader(must.Bytes(json.Marshal(map[string]interface{}{"streams": streams})))))
 							req.Header.Set("Content-Type", "application/json")
 
 							resp, err := http.DefaultClient.Do(req)
@@ -212,8 +216,10 @@ func RunApps(ctx context.Context, config RunAppsConfig, apps ...Application) err
 
 								switch resp.StatusCode {
 								case http.StatusBadRequest:
-									log.Error("Received Bad Request response from Loki", zap.ByteString("body", body))
+									log.Error("Received Bad Request response from Loki",
+										zap.ByteString("body", body))
 								default:
+									//nolint:lll
 									return retry.Retriable(errors.Errorf("unexpected response from loki endpoint, code: %d, body: %s", resp.StatusCode, body))
 								}
 							}

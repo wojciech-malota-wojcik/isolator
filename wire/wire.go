@@ -23,9 +23,10 @@ type Mount struct {
 	Writable bool
 }
 
-// Config stores configuration of executor
+// Config stores configuration of executor.
 type Config struct {
-	// ConfigureSystem tells executor to mount standard mounts like /proc, /dev, /tmp ...  and configure DNS inside new root.
+	// ConfigureSystem tells executor to mount standard mounts like /proc, /dev, /tmp ...  and configure DNS inside new
+	// root.
 	ConfigureSystem bool
 
 	// UseHostNetwork instructs isolator to use host's network and prevents network namespace from being isolated.
@@ -43,11 +44,11 @@ type Config struct {
 	// Hosts is the list of hosts and their IP addresses to resolve inside namespace.
 	Hosts map[string]net.IP
 
-	// Mounts is the list of bindings to apply inside container
+	// Mounts is the list of bindings to apply inside container.
 	Mounts []Mount
 }
 
-// Execute is sent to execute a shell command
+// Execute is sent to execute a shell command.
 type Execute struct {
 	// Command is a command to execute
 	Command string
@@ -104,9 +105,9 @@ type RunEmbeddedFunction struct {
 	Args []string
 }
 
-// Result is sent once command finishes
+// Result is sent once command finishes.
 type Result struct {
-	// Error is the error returned by command
+	// Error is the error returned by command.
 	Error string
 }
 

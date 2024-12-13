@@ -7,7 +7,7 @@ import (
 	"github.com/outofforest/logger"
 )
 
-// Context returns new context with logger
+// Context returns new context with logger.
 func Context(t *testing.T) context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
