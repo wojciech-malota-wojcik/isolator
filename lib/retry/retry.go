@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-
 	"go.uber.org/zap"
 
 	"github.com/outofforest/logger"
@@ -47,19 +46,19 @@ type Config interface {
 	Delays() DelayFn
 }
 
-// FixedConfig defines fixed retry intervals
+// FixedConfig defines fixed retry intervals.
 type FixedConfig struct {
-	// TryAfter is the delay before the first attempt
+	// TryAfter is the delay before the first attempt.
 	TryAfter time.Duration
 
-	// RetryAfter is the delay before each subsequent attempt
+	// RetryAfter is the delay before each subsequent attempt.
 	RetryAfter time.Duration
 
-	// MaxAttempts is the maximum number of attempts taken; 0 = unlimited
+	// MaxAttempts is the maximum number of attempts taken; 0 = unlimited.
 	MaxAttempts int
 }
 
-// Delays implements interface Config
+// Delays implements interface Config.
 func (c FixedConfig) Delays() DelayFn {
 	attempts := 0
 	return func() (time.Duration, bool) {
@@ -75,7 +74,7 @@ func (c FixedConfig) Delays() DelayFn {
 	}
 }
 
-// Immediately means retry without any delays
+// Immediately means retry without any delays.
 var Immediately = FixedConfig{}
 
 // RetriableError means the operation that caused the error should be retried.

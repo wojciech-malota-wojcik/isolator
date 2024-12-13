@@ -6,14 +6,14 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/outofforest/logger"
-	"github.com/outofforest/parallel"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 
 	"github.com/outofforest/isolator"
 	"github.com/outofforest/isolator/lib/task"
 	"github.com/outofforest/isolator/wire"
+	"github.com/outofforest/logger"
+	"github.com/outofforest/parallel"
 )
 
 var _ Application = Embedded{}
@@ -56,7 +56,8 @@ func (e Embedded) GetIP() net.IP {
 }
 
 // GetTaskFunc returns task function running the embedded function.
-func (e Embedded) GetTaskFunc(config RunAppsConfig, appHosts map[string]net.IP, spawn parallel.SpawnFn, logsCh chan<- logEnvelope) task.Func {
+func (e Embedded) GetTaskFunc(config RunAppsConfig, appHosts map[string]net.IP, spawn parallel.SpawnFn,
+	logsCh chan<- logEnvelope) task.Func {
 	return func(ctx context.Context) error {
 		if err := os.MkdirAll(config.AppsDir, 0o700); err != nil {
 			return errors.WithStack(err)
@@ -74,7 +75,8 @@ func (e Embedded) GetTaskFunc(config RunAppsConfig, appHosts map[string]net.IP, 
 	}
 }
 
-func (e Embedded) run(ctx context.Context, appDir string, appHosts map[string]net.IP, logsCh chan<- logEnvelope) error {
+func (e Embedded) run(ctx context.Context, appDir string, appHosts map[string]net.IP,
+	logsCh chan<- logEnvelope) error {
 	hosts := map[string]net.IP{}
 	for h, ip := range e.Hosts {
 		hosts[h] = ip
@@ -116,7 +118,8 @@ func (e Embedded) run(ctx context.Context, appDir string, appHosts map[string]ne
 		})
 	}
 
-	return isolator.Run(ctx, runConfig, func(ctx context.Context, incoming <-chan interface{}, outgoing chan<- interface{}) error {
+	return isolator.Run(ctx, runConfig, func(ctx context.Context, incoming <-chan interface{},
+		outgoing chan<- interface{}) error {
 		log := logger.Get(ctx)
 		log.Info("Requesting embedded function execution")
 

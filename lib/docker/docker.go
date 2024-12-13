@@ -21,9 +21,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/outofforest/libexec"
-	"github.com/outofforest/logger"
-	"github.com/outofforest/parallel"
 	"github.com/pkg/errors"
 	"github.com/ridge/must"
 	"go.uber.org/zap"
@@ -31,6 +28,9 @@ import (
 
 	"github.com/outofforest/isolator/lib/retry"
 	"github.com/outofforest/isolator/lib/task"
+	"github.com/outofforest/libexec"
+	"github.com/outofforest/logger"
+	"github.com/outofforest/parallel"
 )
 
 var userGroupRegExp = regexp.MustCompile("^[0-9]+(:[0-9]+)?$")
@@ -130,7 +130,8 @@ func (c *imageClient) Inflate(ctx context.Context) error {
 	log := logger.Get(ctx)
 	log.Info("Docker image requested")
 
-	return task.Run(ctx, make(chan task.Task), func(ctx context.Context, taskCh chan<- task.Task, doneCh <-chan task.Task) error {
+	return task.Run(ctx, make(chan task.Task), func(ctx context.Context, taskCh chan<- task.Task,
+		doneCh <-chan task.Task) error {
 		select {
 		case <-ctx.Done():
 			return errors.WithStack(ctx.Err())
@@ -169,28 +170,27 @@ func (c *imageClient) Inflate(ctx context.Context) error {
 		if hasher != nil {
 			computedDigest := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
 			if computedDigest != c.tag {
-				return retry.Retriable(errors.Errorf("manifest digest doesn't match, expected: %s, got: %s", c.tag, computedDigest))
+				return retry.Retriable(errors.Errorf("manifest digest doesn't match, expected: %s, got: %s",
+					c.tag, computedDigest))
 			}
 		}
 
-		if m.MediaType != "application/vnd.docker.distribution.manifest.v2+json" {
-			return errors.Errorf("unsupprted media type %s for manifest", m.MediaType)
+		if m.MediaType != "application/vnd.oci.image.manifest.v1+json" {
+			return errors.Errorf("unsupported media type %s for manifest", m.MediaType)
 		}
-		if m.Config.MediaType != "application/vnd.docker.container.image.v1+json" {
-			return errors.Errorf("unsupprted media type %s for config", m.Config.MediaType)
+		if m.Config.MediaType != "application/vnd.oci.image.config.v1+json" {
+			return errors.Errorf("unsupported media type %s for config", m.Config.MediaType)
 		}
 
 		return parallel.Run(ctx, func(ctx context.Context, spawn parallel.SpawnFn) error {
 			layerTasks := make([]task.Task, 0, len(m.Layers))
 			for _, l := range m.Layers {
-				l := l
-
-				if l.MediaType != "application/vnd.docker.image.rootfs.diff.tar.gzip" {
-					return errors.Errorf("unsupprted media type %s for layer", l.MediaType)
+				if l.MediaType != "application/vnd.oci.image.layer.v1.tar+gzip" {
+					return errors.Errorf("unsupported media type %s for layer", l.MediaType)
 				}
 
 				layerTasks = append(layerTasks, task.Task{
-					ID: fmt.Sprintf("docker:blob:%s", l.Digest),
+					ID: "docker:blob:" + l.Digest,
 					Do: func(ctx context.Context) error {
 						return c.fetchBlob(ctx, l.Digest, filepath.Join(c.cacheDir, l.Digest+".tgz"))
 					},
@@ -202,7 +202,8 @@ func (c *imageClient) Inflate(ctx context.Context) error {
 					{
 						ID: fmt.Sprintf("docker:config:%s:%s", c.image, m.Config.Digest),
 						Do: func(ctx context.Context) error {
-							return c.fetchBlob(ctx, m.Config.Digest, filepath.Join(c.cacheDir, fmt.Sprintf("%s:%s:config.json", fileName, m.Config.Digest)))
+							return c.fetchBlob(ctx, m.Config.Digest, filepath.Join(c.cacheDir,
+								fmt.Sprintf("%s:%s:config.json", fileName, m.Config.Digest)))
 						},
 					},
 				}, layerTasks...) {
@@ -229,6 +230,7 @@ func (c *imageClient) Inflate(ctx context.Context) error {
 					case t = <-doneCh:
 					}
 
+					//nolint:nestif
 					if strings.HasPrefix(t.ID, "docker:config:") {
 						configDone = true
 					} else {
@@ -263,7 +265,8 @@ func (c *imageClient) Inflate(ctx context.Context) error {
 
 							computedDigest := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
 							if computedDigest != l.Digest {
-								return errors.Errorf("blob digest doesn't match, expected: %s, got: %s", l.Digest, computedDigest)
+								return errors.Errorf("blob digest doesn't match, expected: %s, got: %s",
+									l.Digest, computedDigest)
 							}
 
 							log.Info("Blob inflated", zap.String("blobFile", blobFile))
@@ -316,7 +319,8 @@ func (c *imageClient) RunContainer(ctx context.Context, config RunContainerConfi
 	if hasher != nil {
 		computedDigest := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
 		if computedDigest != c.tag {
-			return retry.Retriable(errors.Errorf("manifest digest doesn't match, expected: %s, got: %s", c.tag, computedDigest))
+			return retry.Retriable(errors.Errorf("manifest digest doesn't match, expected: %s, got: %s", c.tag,
+				computedDigest))
 		}
 	}
 
@@ -339,7 +343,8 @@ func (c *imageClient) RunContainer(ctx context.Context, config RunContainerConfi
 
 	computedDigest := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
 	if computedDigest != m.Config.Digest {
-		return retry.Retriable(errors.Errorf("container config digest doesn't match, expected: %s, got: %s", m.Config.Digest, computedDigest))
+		return retry.Retriable(errors.Errorf("container config digest doesn't match, expected: %s, got: %s",
+			m.Config.Digest, computedDigest))
 	}
 
 	if config.Entrypoint == nil {
@@ -363,6 +368,8 @@ func (c *imageClient) RunContainer(ctx context.Context, config RunContainerConfi
 
 	var userID int
 	var groupID int
+
+	//nolint:nestif
 	if config.User == "" {
 		config.User = cc.Config.User
 		if config.User != "" {
@@ -420,7 +427,8 @@ func (c *imageClient) authorize(ctx context.Context, currentAuthToken string) (s
 		resp, err := c.c.Do(must.HTTPRequest(http.NewRequestWithContext(
 			ctx,
 			http.MethodGet,
-			fmt.Sprintf("https://auth.docker.io/token?service=registry.docker.io&scope=repository:%s:pull", c.image),
+			fmt.Sprintf("https://auth.docker.io/token?service=registry.docker.io&scope=repository:%s:pull",
+				c.image),
 			nil,
 		)))
 		if err != nil {
@@ -553,7 +561,8 @@ func (c *imageClient) fetchManifest(ctx context.Context, dstFile string) (retErr
 				if err := os.Remove(dstFile); err != nil {
 					return errors.WithStack(err)
 				}
-				return retry.Retriable(errors.Errorf("digest doesn't match, expected: %s, got: %s", c.tag, computedDigest))
+				return retry.Retriable(errors.Errorf("digest doesn't match, expected: %s, got: %s", c.tag,
+					computedDigest))
 			}
 		}
 
@@ -649,7 +658,8 @@ func (c *imageClient) fetchBlob(ctx context.Context, digest, dstFile string) (re
 			if err := os.Remove(dstFile); err != nil {
 				return errors.WithStack(err)
 			}
-			return retry.Retriable(errors.Errorf("digest doesn't match, expected: %s, got: %s", digest, computedDigest))
+			return retry.Retriable(errors.Errorf("digest doesn't match, expected: %s, got: %s", digest,
+				computedDigest))
 		}
 
 		return nil
@@ -671,8 +681,8 @@ loop:
 		case header == nil:
 			continue
 		}
-		// We take mode from header.FileInfo().Mode(), not from header.Mode because they may be in different formats (meaning of bits may be different).
-		// header.FileInfo().Mode() returns compatible value.
+		// We take mode from header.FileInfo().Mode(), not from header.Mode because they may be in different formats
+		// (meaning of bits may be different). header.FileInfo().Mode() returns compatible value.
 		mode := header.FileInfo().Mode()
 
 		switch {
@@ -754,8 +764,8 @@ loop:
 		}
 
 		// Unless CAP_FSETID capability is set for the process every operation modifying the file/dir will reset
-		// setuid, setgid nd sticky bits. After saving those files/dirs the mode has to be set once again to set those bits.
-		// This has to be the last operation on the file/dir.
+		// setuid, setgid nd sticky bits. After saving those files/dirs the mode has to be set once again to set those
+		// bits. This has to be the last operation on the file/dir.
 		// On linux mode is not supported for symlinks, mode is always taken from target location.
 		if header.Typeflag != tar.TypeSymlink {
 			if err := os.Chmod(header.Name, mode); err != nil {

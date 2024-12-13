@@ -6,11 +6,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/outofforest/logger"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
 	"github.com/outofforest/isolator/wire"
+	"github.com/outofforest/logger"
 )
 
 func newLogTransmitter(encode wire.EncoderFunc) *logTransmitter {
@@ -90,7 +90,8 @@ func (lt *logTransmitter) Sync() error {
 
 func withZAPTransmitter(ctx context.Context, encode wire.EncoderFunc) context.Context {
 	transmitter := newLogTransmitter(encode)
-	transmitCore := zapcore.NewCore(zapcore.NewJSONEncoder(logger.EncoderConfig), transmitter, zap.NewAtomicLevelAt(zap.DebugLevel))
+	transmitCore := zapcore.NewCore(zapcore.NewJSONEncoder(logger.EncoderConfig), transmitter,
+		zap.NewAtomicLevelAt(zap.DebugLevel))
 
 	log := logger.Get(ctx)
 	log = log.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {

@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/pkg/errors"
+
 	"github.com/outofforest/logger"
 	"github.com/outofforest/parallel"
-	"github.com/pkg/errors"
 )
 
 // Func is the function containing a logic of the task.
@@ -37,7 +38,7 @@ func Run(ctx context.Context, doneCh chan Task, sourceFunc SourceFunc) error {
 			return sourceFunc(ctx, taskCh, doneCh)
 		})
 
-		for i := 0; i < workers; i++ {
+		for i := range workers {
 			spawn(fmt.Sprintf("worker-%d", i), parallel.Continue, func(ctx context.Context) error {
 				for {
 					select {

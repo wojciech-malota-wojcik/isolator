@@ -4,14 +4,14 @@ import (
 	"context"
 	"os/exec"
 
-	"github.com/outofforest/libexec"
-	"github.com/outofforest/logger"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 
 	"github.com/outofforest/isolator/lib/docker"
 	"github.com/outofforest/isolator/lib/libhttp"
 	"github.com/outofforest/isolator/wire"
+	"github.com/outofforest/libexec"
+	"github.com/outofforest/logger"
 )
 
 // NewInflateDockerImageHandler creates new standard handler for InflateDockerImage command.

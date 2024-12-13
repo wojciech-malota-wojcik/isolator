@@ -4,9 +4,10 @@ import (
 	"context"
 	"os"
 
+	"github.com/pkg/errors"
+
 	"github.com/outofforest/parallel"
 	"github.com/outofforest/run"
-	"github.com/pkg/errors"
 )
 
 // DefaultArg is the default CLI arg for starting the executor server.

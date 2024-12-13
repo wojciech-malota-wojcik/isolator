@@ -235,7 +235,8 @@ func createBridge(network *net.IPNet) error {
 		return errors.WithStack(err)
 	}
 
-	if err := netlink.AddrAdd(bridge, &netlink.Addr{IPNet: &net.IPNet{IP: firstIP(network), Mask: network.Mask}}); err != nil {
+	if err := netlink.AddrAdd(bridge, &netlink.Addr{IPNet: &net.IPNet{IP: firstIP(network),
+		Mask: network.Mask}}); err != nil {
 		return errors.WithStack(err)
 	}
 
@@ -398,7 +399,8 @@ func enableForwarding(network *net.IPNet) error {
 		return errors.WithStack(err)
 	}
 
-	return errors.WithStack(os.WriteFile(filepath.Join("/proc/sys/net/ipv4/conf", bridgeName(network), "route_localnet"), []byte("1"), 0o600))
+	return errors.WithStack(os.WriteFile(filepath.Join("/proc/sys/net/ipv4/conf", bridgeName(network),
+		"route_localnet"), []byte("1"), 0o600))
 }
 
 func deleteBridge(network *net.IPNet) error {
@@ -461,7 +463,8 @@ func configureFirewall(ip *net.IPNet, exposedPorts []ExposedPort) error {
 		case nftChainNATPostrouting:
 			natPostroutingChain = ch
 		}
-		if filterForwardChain != nil && natOutputChain != nil && natPreroutingChain != nil && natPostroutingChain != nil {
+		if filterForwardChain != nil && natOutputChain != nil && natPreroutingChain != nil &&
+			natPostroutingChain != nil {
 			break
 		}
 	}

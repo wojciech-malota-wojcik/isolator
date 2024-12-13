@@ -6,8 +6,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/outofforest/logger"
-	"github.com/outofforest/parallel"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 
@@ -15,6 +13,8 @@ import (
 	"github.com/outofforest/isolator/lib/task"
 	"github.com/outofforest/isolator/network"
 	"github.com/outofforest/isolator/wire"
+	"github.com/outofforest/logger"
+	"github.com/outofforest/parallel"
 )
 
 var _ Application = Container{}
@@ -75,7 +75,8 @@ func (c Container) GetIP() net.IP {
 }
 
 // GetTaskFunc returns task function running the container.
-func (c Container) GetTaskFunc(config RunAppsConfig, appHosts map[string]net.IP, spawn parallel.SpawnFn, logsCh chan<- logEnvelope) task.Func {
+func (c Container) GetTaskFunc(config RunAppsConfig, appHosts map[string]net.IP, spawn parallel.SpawnFn,
+	logsCh chan<- logEnvelope) task.Func {
 	return func(ctx context.Context) error {
 		ctx = logger.With(ctx, zap.String("appName", c.Name))
 
@@ -170,7 +171,8 @@ func (c Container) inflate(ctx context.Context, config RunAppsConfig, appDir str
 	})
 }
 
-func (c Container) run(ctx context.Context, config RunAppsConfig, appDir string, appHosts map[string]net.IP, logsCh chan<- logEnvelope) error {
+func (c Container) run(ctx context.Context, config RunAppsConfig, appDir string, appHosts map[string]net.IP,
+	logsCh chan<- logEnvelope) error {
 	hosts := map[string]net.IP{}
 	for h, ip := range c.Hosts {
 		hosts[h] = ip
@@ -219,7 +221,8 @@ func (c Container) run(ctx context.Context, config RunAppsConfig, appDir string,
 		})
 	}
 
-	return isolator.Run(ctx, runConfig, func(ctx context.Context, incoming <-chan interface{}, outgoing chan<- interface{}) error {
+	return isolator.Run(ctx, runConfig, func(ctx context.Context, incoming <-chan interface{},
+		outgoing chan<- interface{}) error {
 		log := logger.Get(ctx)
 		log.Info("Requesting docker container")
 

@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// NewSelfClient returns http client which is independent of settings in os, so may be used inside empty chroot
+// NewSelfClient returns http client which is independent of settings in os, so may be used inside empty chroot.
 func NewSelfClient() *http.Client {
 	rootCAs, err := x509.SystemCertPool()
 	if err != nil {
